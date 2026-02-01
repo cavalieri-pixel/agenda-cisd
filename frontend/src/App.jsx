@@ -17,7 +17,7 @@ function App() {
 
   // 1. Cargar Profesionales
   useEffect(() => {
-    axios.get('http://localhost:3000/api/professionals')
+    axios.get('https://cisd-api.onrender.com/api/professionals')
       .then((response) => {
         setProfesionales(response.data);
         if (response.data.length > 0) {

@@ -14,7 +14,7 @@ export default function AppointmentModal({ isOpen, onClose, professionalId, star
   // 1. Cargar la lista de servicios médicos al abrir
   useEffect(() => {
     if (isOpen) {
-      axios.get('http://localhost:3000/api/services')
+      axios.get('https://cisd-api.onrender.com/api/services')
         .then(res => {
           setServices(res.data);
           if (res.data.length > 0) {
@@ -35,7 +35,7 @@ export default function AppointmentModal({ isOpen, onClose, professionalId, star
     e.preventDefault();
     setLoading(true);
     try {
-      await axios.post('http://localhost:3000/api/appointments', {
+      await axios.post('https://cisd-api.onrender.com/api/appointments', {
         professionalId,
         rut: formData.rut,
         patientName: formData.patientName,

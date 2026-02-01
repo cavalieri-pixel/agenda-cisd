@@ -5,33 +5,35 @@ import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import axios from 'axios';
 import AppointmentModal from './components/AppointmentModal';
-import Login from './components/Login'; // <--- Importamos el Login
+import Login from './components/Login';
 
 function App() {
-  // Estado para saber si estamos logueados (buscamos en la memoria del navegador)
   const [token, setToken] = useState(localStorage.getItem('token'));
-  
   const [profesionales, setProfesionales] = useState([]);
   const [citas, setCitas] = useState([]);
   const [profesionalSeleccionado, setProfesionalSeleccionado] = useState(null);
   
+  // Nuevo estado para evitar la pantalla blanca
+  const [loadingData, setLoadingData] = useState(false); 
+  
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
 
-  // --- SI NO HAY TOKEN, MOSTRAMOS EL LOGIN ---
+  // --- 1. SI NO HAY TOKEN, LOGIN ---
   if (!token) {
     return <Login onLogin={setToken} />;
   }
 
-  // Función para cerrar sesión
   const handleLogout = () => {
-    localStorage.removeItem('token'); // Borrar credencial
-    setToken(null); // Volver al login
+    localStorage.removeItem('token');
+    setToken(null);
+    setProfesionales([]); // Limpiamos datos al salir
   };
 
-  // 1. Cargar Profesionales
+  // --- 2. CARGAR PROFESIONALES (Al iniciar sesión) ---
   useEffect(() => {
     if (token) {
+      setLoadingData(true); // Activamos "Cargando..."
       axios.get('https://cisd-api.onrender.com/api/professionals')
         .then((response) => {
           setProfesionales(response.data);
@@ -39,11 +41,12 @@ function App() {
             setProfesionalSeleccionado(response.data[0].id);
           }
         })
-        .catch((error) => console.error("Error cargando profesionales:", error));
+        .catch((error) => console.error("Error cargando profesionales:", error))
+        .finally(() => setLoadingData(false)); // Desactivamos al terminar
     }
   }, [token]);
 
-  // 2. Función para cargar citas
+  // --- 3. CARGAR CITAS ---
   const cargarCitas = () => {
     if (profesionalSeleccionado) {
       const start = '2025-01-01'; 
@@ -81,18 +84,30 @@ function App() {
     setIsModalOpen(true);
   }
 
+  // --- 4. PANTALLA DE CARGA (Para evitar el error #310) ---
+  if (loadingData || profesionales.length === 0) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 font-medium">Cargando Agenda CISD...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // --- 5. LA APLICACIÓN PRINCIPAL ---
   return (
     <div className="min-h-screen bg-gray-50 p-6 font-sans">
       
-      {/* Encabezado con Botón de Salir */}
-      <div className="bg-white p-4 rounded-lg shadow mb-6 flex justify-between items-center border-l-4 border-blue-600">
+      {/* Encabezado */}
+      <div className="bg-white p-4 rounded-lg shadow mb-6 flex flex-col sm:flex-row justify-between items-center border-l-4 border-blue-600 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Agenda CISD</h1>
           <p className="text-sm text-gray-500">Sistema Seguro</p>
         </div>
         
         <div className="flex items-center gap-4">
-          {/* Selector de Profesional */}
           <div className="flex items-center gap-2">
             <span className="font-medium text-gray-700 hidden sm:inline">Ver agenda de:</span>
             <select 
@@ -108,7 +123,6 @@ function App() {
             </select>
           </div>
 
-          {/* Botón Cerrar Sesión */}
           <button 
             onClick={handleLogout}
             className="text-sm text-red-600 hover:text-red-800 font-medium border border-red-200 px-3 py-1 rounded hover:bg-red-50"

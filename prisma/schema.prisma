@@ -1,56 +1,56 @@
-// This is your Prisma schema file
+// prisma/schema.prisma
 
 generator client {
-  provider = "prisma-client-js" 
-  // Antes decía solo "prisma-client", eso estaba mal.
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL") 
-  // Esta línea es CRÍTICA: le dice a Prisma que lea tu link de Neon desde el archivo .env
+  url      = env("DATABASE_URL")
 }
 
-// 1. Los Profesionales (Fernanda, Bastian, etc.)
+// 1. Los Profesionales (Con soporte para Login)
 model Professional {
-  id           Int           @id @default(autoincrement())
-  name         String
-  email        String?       @unique
-  password     String?       // Para el login futuro
-  color        String        @default("#3788d8") // El color para el calendario
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique // Obligatorio para el Login
+  // La contraseña tiene un valor por defecto para que no falle con los usuarios que ya existen
+  password  String   @default("$2a$10$cw/somehashedstring") 
+  color     String   @default("#3788d8")
+  
   appointments Appointment[]
-  schedules    Schedule[]    // Sus horarios de atención
+  schedules    Schedule[]
   createdAt    DateTime      @default(now())
 }
 
-// 2. Los Servicios (Fonoaudiología, etc.)
+// 2. Los Servicios
 model Service {
-  id           Int           @id @default(autoincrement())
-  code         String        @unique // Ej: FA-DOM-ALR
-  name         String        // Ej: Atención Fonoaudiología Adulto
-  durationMin  Int           @default(30)
-  price        Int?
-  isTelemed    Boolean       @default(false) // Si es true, genera Meet
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  name        String
+  durationMin Int      @default(30)
+  price       Int?
+  isTelemed   Boolean  @default(false)
   appointments Appointment[]
 }
 
 // 3. Los Pacientes
 model Patient {
-  id           Int           @id @default(autoincrement())
-  rut          String        @unique
+  id           Int      @id @default(autoincrement())
+  rut          String   @unique
   name         String
   email        String?
   phone        String?
   appointments Appointment[]
-  createdAt    DateTime      @default(now())
+  createdAt    DateTime @default(now())
 }
 
-// 4. Las Citas (El corazón del sistema)
+// 4. Las Citas
 model Appointment {
   id             Int          @id @default(autoincrement())
-  startTime      DateTime     // Fecha y hora inicio
-  endTime        DateTime     // Fecha y hora fin
-  status         String       @default("CONFIRMED") // CONFIRMED, CANCELLED, ATTENDED
+  startTime      DateTime
+  endTime        DateTime
+  status         String       @default("CONFIRMED")
   
   professional   Professional @relation(fields: [professionalId], references: [id])
   professionalId Int
@@ -61,17 +61,17 @@ model Appointment {
   service        Service?     @relation(fields: [serviceId], references: [id])
   serviceId      Int?
 
-  meetLink       String?      // Link de Google Meet generado
-  googleEventId  String?      // ID para sincronizar con Google Calendar
+  meetLink       String?
+  googleEventId  String?
   createdAt      DateTime     @default(now())
 }
 
-// 5. Horarios fijos de los profesionales
+// 5. Horarios
 model Schedule {
   id             Int          @id @default(autoincrement())
   professional   Professional @relation(fields: [professionalId], references: [id])
   professionalId Int
-  dayOfWeek      Int          // 1=Lunes, 2=Martes...
-  startTime      String       // "09:00"
-  endTime        String       // "20:00"
+  dayOfWeek      Int
+  startTime      String
+  endTime        String
 }

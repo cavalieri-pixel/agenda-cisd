@@ -1,19 +1,50 @@
-// index.js - El cerebro de tu aplicación
 const express = require('express');
 const cors = require('cors');
 const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcryptjs'); // <--- Seguridad
+const jwt = require('jsonwebtoken'); // <--- Seguridad
 
-const app = express();
 const prisma = new PrismaClient();
-const PORT = process.env.PORT || 3000;
+const app = express();
+const port = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'secret_cisd_key_2026'; // Llave maestra
 
-// Middleware (Permisos y formato de datos)
-app.use(cors()); // Permite que el frontend (React) hable con esto
-app.use(express.json()); // Permite leer datos JSON
+app.use(cors());
+app.use(express.json());
 
-// --- RUTAS (Los "botones" que apretará el sistema) ---
+// --- RUTA 1: LOGIN (EL PORTERO) ---
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
 
-// 1. Obtener lista de Profesionales
+  try {
+    // 1. Buscar al usuario
+    const professional = await prisma.professional.findUnique({ where: { email } });
+    if (!professional) {
+      return res.status(401).json({ error: 'Usuario no encontrado' });
+    }
+
+    // 2. Verificar la contraseña (comparar lo escrito con lo encriptado)
+    const passwordValid = await bcrypt.compare(password, professional.password);
+    if (!passwordValid) {
+      return res.status(401).json({ error: 'Contraseña incorrecta' });
+    }
+
+    // 3. Crear el pase digital (Token)
+    const token = jwt.sign(
+      { id: professional.id, email: professional.email, name: professional.name },
+      JWT_SECRET,
+      { expiresIn: '12h' } // La sesión dura 12 horas
+    );
+
+    res.json({ token, user: { name: professional.name, email: professional.email } });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al iniciar sesión' });
+  }
+});
+
+// --- RUTA 2: OBTENER PROFESIONALES ---
 app.get('/api/professionals', async (req, res) => {
   try {
     const professionals = await prisma.professional.findMany();
@@ -23,7 +54,7 @@ app.get('/api/professionals', async (req, res) => {
   }
 });
 
-// 2. Obtener lista de Servicios
+// --- RUTA 3: OBTENER SERVICIOS ---
 app.get('/api/services', async (req, res) => {
   try {
     const services = await prisma.service.findMany();
@@ -33,35 +64,40 @@ app.get('/api/services', async (req, res) => {
   }
 });
 
-// 3. Obtener Citas de un rango de fechas (Para el calendario)
+// --- RUTA 4: OBTENER CITAS ---
 app.get('/api/appointments', async (req, res) => {
   const { professionalId, start, end } = req.query;
+  
+  if (!professionalId) {
+    return res.status(400).json({ error: 'Falta professionalId' });
+  }
+
   try {
     const appointments = await prisma.appointment.findMany({
       where: {
         professionalId: parseInt(professionalId),
-        startTime: {
-          gte: new Date(start), // Mayor o igual a fecha inicio
-          lte: new Date(end),   // Menor o igual a fecha fin
-        },
+        startTime: { gte: new Date(start) },
+        endTime: { lte: new Date(end) },
+        status: 'CONFIRMED'
       },
       include: {
         patient: true,
-        service: true,
+        service: true
       }
     });
     res.json(appointments);
   } catch (error) {
-    res.status(500).json({ error: 'Error buscando citas' });
+    console.error(error);
+    res.status(500).json({ error: 'Error al cargar citas' });
   }
 });
 
-// 4. Crear una Nueva Cita (Aquí irá la magia de Google Meet después)
+// --- RUTA 5: CREAR CITA ---
 app.post('/api/appointments', async (req, res) => {
   const { professionalId, rut, patientName, patientEmail, serviceCode, startTime } = req.body;
 
   try {
-    // A. Buscar o Crear Paciente
+    // 1. Buscar o Crear Paciente
     let patient = await prisma.patient.findUnique({ where: { rut } });
     if (!patient) {
       patient = await prisma.patient.create({
@@ -69,42 +105,33 @@ app.post('/api/appointments', async (req, res) => {
       });
     }
 
-    // B. Buscar el servicio para saber duración y si es Telemedicina
+    // 2. Buscar el servicio para saber duración
     const service = await prisma.service.findUnique({ where: { code: serviceCode } });
-    
-    // C. Calcular hora de fin
+    if (!service) return res.status(400).json({ error: 'Servicio no válido' });
+
+    // 3. Calcular hora de fin
     const start = new Date(startTime);
     const end = new Date(start.getTime() + service.durationMin * 60000);
 
-    // D. Lógica Google Meet (Simulada por ahora)
-    let meetLink = null;
-    if (service.isTelemed) {
-      // Aquí conectaremos con la API real de Google más adelante
-      meetLink = `https://meet.google.com/simulacion-${Date.now()}`; 
-    }
-
-    // E. Guardar la cita
-    const newAppointment = await prisma.appointment.create({
+    // 4. Guardar Cita
+    const appointment = await prisma.appointment.create({
       data: {
         startTime: start,
         endTime: end,
         professionalId: parseInt(professionalId),
         patientId: patient.id,
         serviceId: service.id,
-        meetLink: meetLink,
         status: 'CONFIRMED'
       }
     });
 
-    res.json(newAppointment);
-
+    res.json(appointment);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Error creando la cita', details: error.message });
+    res.status(500).json({ error: 'Error al crear la cita' });
   }
 });
 
-// Iniciar el servidor
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor CISD corriendo en http://localhost:${PORT}`);
+app.listen(port, () => {
+  console.log(`🚀 Servidor CISD corriendo en http://localhost:${port}`);
 });

@@ -4,7 +4,7 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import axios from 'axios';
-import AppointmentModal from './components/AppointmentModal'; // <--- Importamos el modal
+import AppointmentModal from './components/AppointmentModal'; 
 
 function App() {
   const [profesionales, setProfesionales] = useState([]);
@@ -33,7 +33,8 @@ function App() {
       const start = '2025-01-01'; // En prod esto sería dinámico
       const end = '2026-12-31';
       
-      axios.get('http://localhost:3000/api/appointments', {
+      // CORREGIDO: Ahora apunta a Render, no a localhost
+      axios.get('https://cisd-api.onrender.com/api/appointments', {
         params: { professionalId: profesionalSeleccionado, start, end }
       })
       .then((response) => {

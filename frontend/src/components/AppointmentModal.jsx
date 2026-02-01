@@ -35,6 +35,7 @@ export default function AppointmentModal({ isOpen, onClose, professionalId, star
     e.preventDefault();
     setLoading(true);
     try {
+      // POST a la URL de producción
       await axios.post('https://cisd-api.onrender.com/api/appointments', {
         professionalId,
         rut: formData.rut,

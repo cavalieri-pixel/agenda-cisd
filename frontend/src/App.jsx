@@ -9,31 +9,25 @@ import Login from './components/Login';
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
-  const [profesionales, setProfesionales] = useState([]);
+  
+  // CAMBIO CLAVE 1: Iniciamos en 'null' para saber que NO hemos cargado nada aún
+  const [profesionales, setProfesionales] = useState(null); 
   const [citas, setCitas] = useState([]);
   const [profesionalSeleccionado, setProfesionalSeleccionado] = useState(null);
-  
-  // Nuevo estado para evitar la pantalla blanca
-  const [loadingData, setLoadingData] = useState(false); 
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
 
-  // --- 1. SI NO HAY TOKEN, LOGIN ---
-  if (!token) {
-    return <Login onLogin={setToken} />;
-  }
-
+  // --- 1. FUNCIÓN DE SALIDA (LOGOUT) ---
   const handleLogout = () => {
     localStorage.removeItem('token');
-    setToken(null);
-    setProfesionales([]); // Limpiamos datos al salir
+    // Forzamos una recarga limpia para evitar errores de memoria del calendario
+    window.location.reload(); 
   };
 
-  // --- 2. CARGAR PROFESIONALES (Al iniciar sesión) ---
+  // --- 2. CARGAR DATOS (Solo si hay token) ---
   useEffect(() => {
     if (token) {
-      setLoadingData(true); // Activamos "Cargando..."
       axios.get('https://cisd-api.onrender.com/api/professionals')
         .then((response) => {
           setProfesionales(response.data);
@@ -41,8 +35,13 @@ function App() {
             setProfesionalSeleccionado(response.data[0].id);
           }
         })
-        .catch((error) => console.error("Error cargando profesionales:", error))
-        .finally(() => setLoadingData(false)); // Desactivamos al terminar
+        .catch((error) => {
+          console.error("Error cargando profesionales:", error);
+          // Si el token expiró o es inválido, sacamos al usuario
+          if (error.response && error.response.status === 401) {
+            handleLogout();
+          }
+        });
     }
   }, [token]);
 
@@ -74,7 +73,9 @@ function App() {
     cargarCitas();
   }, [profesionalSeleccionado]);
 
+  // Helper seguro: verifica que 'profesionales' exista antes de buscar
   const obtenerColorProfesional = (id) => {
+    if (!profesionales) return '#3788d8';
     const prof = profesionales.find(p => p.id === parseInt(id));
     return prof ? prof.color : '#3788d8';
   }
@@ -84,23 +85,30 @@ function App() {
     setIsModalOpen(true);
   }
 
-  // --- 4. PANTALLA DE CARGA (Para evitar el error #310) ---
-  if (loadingData || profesionales.length === 0) {
+  // --- RENDERIZADO CONDICIONAL (EL SEMÁFORO) ---
+
+  // CASO A: No hay token -> Mostrar Login
+  if (!token) {
+    return <Login onLogin={setToken} />;
+  }
+
+  // CASO B: Hay token, pero los profesionales siguen siendo null -> MOSTRAR CARGANDO
+  // Esto evita la pantalla blanca al entrar
+  if (!profesionales) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600 font-medium">Cargando Agenda CISD...</p>
+          <p className="text-gray-600 font-medium">Conectando con CISD...</p>
         </div>
       </div>
     );
   }
 
-  // --- 5. LA APLICACIÓN PRINCIPAL ---
+  // CASO C: Todo listo -> Mostrar Calendario
   return (
     <div className="min-h-screen bg-gray-50 p-6 font-sans">
       
-      {/* Encabezado */}
       <div className="bg-white p-4 rounded-lg shadow mb-6 flex flex-col sm:flex-row justify-between items-center border-l-4 border-blue-600 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Agenda CISD</h1>
@@ -125,14 +133,13 @@ function App() {
 
           <button 
             onClick={handleLogout}
-            className="text-sm text-red-600 hover:text-red-800 font-medium border border-red-200 px-3 py-1 rounded hover:bg-red-50"
+            className="text-sm text-red-600 hover:text-red-800 font-medium border border-red-200 px-3 py-1 rounded hover:bg-red-50 transition-colors"
           >
             Salir
           </button>
         </div>
       </div>
 
-      {/* Calendario */}
       <div className="bg-white p-6 rounded-lg shadow-lg">
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}

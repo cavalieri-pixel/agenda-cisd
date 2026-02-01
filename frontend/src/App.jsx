@@ -6,22 +6,27 @@ import interactionPlugin from '@fullcalendar/interaction';
 import axios from 'axios';
 import AppointmentModal from './components/AppointmentModal';
 import Login from './components/Login';
+import EventModal from './components/EventModal'; // <--- IMPORTANTE: Importamos el nuevo modal
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
   
-  // CAMBIO CLAVE 1: Iniciamos en 'null' para saber que NO hemos cargado nada aún
+  // Estado de datos
   const [profesionales, setProfesionales] = useState(null); 
   const [citas, setCitas] = useState([]);
   const [profesionalSeleccionado, setProfesionalSeleccionado] = useState(null);
   
+  // Estado para Crear Cita (Modal de Agendar)
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
+
+  // Estado para Ver Detalles (Modal de Video/Info)
+  const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState(null);
 
   // --- 1. FUNCIÓN DE SALIDA (LOGOUT) ---
   const handleLogout = () => {
     localStorage.removeItem('token');
-    // Forzamos una recarga limpia para evitar errores de memoria del calendario
     window.location.reload(); 
   };
 
@@ -37,7 +42,6 @@ function App() {
         })
         .catch((error) => {
           console.error("Error cargando profesionales:", error);
-          // Si el token expiró o es inválido, sacamos al usuario
           if (error.response && error.response.status === 401) {
             handleLogout();
           }
@@ -62,6 +66,7 @@ function App() {
           end: cita.endTime,
           backgroundColor: obtenerColorProfesional(profesionalSeleccionado),
           borderColor: obtenerColorProfesional(profesionalSeleccionado),
+          extendedProps: { ...cita } // <--- Guardamos toda la info oculta para usarla en el modal
         }));
         setCitas(eventosFormateados);
       })
@@ -73,27 +78,32 @@ function App() {
     cargarCitas();
   }, [profesionalSeleccionado]);
 
-  // Helper seguro: verifica que 'profesionales' exista antes de buscar
   const obtenerColorProfesional = (id) => {
     if (!profesionales) return '#3788d8';
     const prof = profesionales.find(p => p.id === parseInt(id));
     return prof ? prof.color : '#3788d8';
   }
 
+  // --- MANEJADORES DE CLIC ---
+
+  // Clic en espacio vacío -> Crear Cita
   const handleDateClick = (arg) => {
     setSelectedDate(arg.dateStr);
     setIsModalOpen(true);
   }
 
-  // --- RENDERIZADO CONDICIONAL (EL SEMÁFORO) ---
+  // Clic en evento existente -> Ver Detalles/Video
+  const handleEventClick = (clickInfo) => {
+    setSelectedEvent(clickInfo.event);
+    setIsEventModalOpen(true);
+  }
 
-  // CASO A: No hay token -> Mostrar Login
+  // --- RENDERIZADO CONDICIONAL ---
+
   if (!token) {
     return <Login onLogin={setToken} />;
   }
 
-  // CASO B: Hay token, pero los profesionales siguen siendo null -> MOSTRAR CARGANDO
-  // Esto evita la pantalla blanca al entrar
   if (!profesionales) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -105,7 +115,6 @@ function App() {
     );
   }
 
-  // CASO C: Todo listo -> Mostrar Calendario
   return (
     <div className="min-h-screen bg-gray-50 p-6 font-sans">
       
@@ -156,17 +165,26 @@ function App() {
           allDaySlot={false}
           height="auto"
           events={citas}
-          dateClick={handleDateClick}
+          dateClick={handleDateClick}  // Clic en blanco
+          eventClick={handleEventClick} // Clic en evento (NUEVO)
           nowIndicator={true}
         />
       </div>
 
+      {/* Modal para Crear Cita */}
       <AppointmentModal 
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         professionalId={profesionalSeleccionado}
         startTime={selectedDate}
         onSuccess={cargarCitas} 
+      />
+
+      {/* Modal para Ver Detalles y Video (NUEVO) */}
+      <EventModal 
+        isOpen={isEventModalOpen}
+        onClose={() => setIsEventModalOpen(false)}
+        event={selectedEvent}
       />
 
     </div>

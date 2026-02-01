@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilos personalizados para el Calendario */
+.fc-event {
+  cursor: pointer;
+  padding: 2px;
+}
+.fc-toolbar-title {
+  font-size: 1.2rem !important;
+}
+.fc-col-header-cell {
+  background-color: #f3f4f6;
+  padding: 8px 0;
+}

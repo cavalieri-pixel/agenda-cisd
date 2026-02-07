@@ -6,7 +6,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import axios from 'axios';
 import AppointmentModal from './components/AppointmentModal';
 import Login from './components/Login';
-import EventModal from './components/EventModal'; // <--- Importamos el modal de detalles
+import EventModal from './components/EventModal';
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
@@ -16,21 +16,17 @@ function App() {
   const [citas, setCitas] = useState([]);
   const [profesionalSeleccionado, setProfesionalSeleccionado] = useState(null);
   
-  // Estado para Crear Cita (Modal de Agendar)
+  // Modales
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
-
-  // Estado para Ver Detalles (Modal de Video/Info)
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
 
-  // --- 1. FUNCIÓN DE SALIDA (LOGOUT) ---
   const handleLogout = () => {
     localStorage.removeItem('token');
     window.location.reload(); 
   };
 
-  // --- 2. CARGAR DATOS (Solo si hay token) ---
   useEffect(() => {
     if (token) {
       axios.get('https://cisd-api.onrender.com/api/professionals')
@@ -41,15 +37,11 @@ function App() {
           }
         })
         .catch((error) => {
-          console.error("Error cargando profesionales:", error);
-          if (error.response && error.response.status === 401) {
-            handleLogout();
-          }
+          if (error.response && error.response.status === 401) handleLogout();
         });
     }
   }, [token]);
 
-  // --- 3. CARGAR CITAS ---
   const cargarCitas = () => {
     if (profesionalSeleccionado) {
       const start = '2025-01-01'; 
@@ -66,7 +58,7 @@ function App() {
           end: cita.endTime,
           backgroundColor: obtenerColorProfesional(profesionalSeleccionado),
           borderColor: obtenerColorProfesional(profesionalSeleccionado),
-          extendedProps: { ...cita } // <--- Guardamos toda la info oculta para usarla en el modal
+          extendedProps: { ...cita } 
         }));
         setCitas(eventosFormateados);
       })
@@ -84,25 +76,41 @@ function App() {
     return prof ? prof.color : '#3788d8';
   }
 
-  // --- MANEJADORES DE CLIC ---
+  // --- MANEJADORES ---
 
-  // Clic en espacio vacío -> Crear Cita
   const handleDateClick = (arg) => {
     setSelectedDate(arg.dateStr);
     setIsModalOpen(true);
   }
 
-  // Clic en evento existente -> Ver Detalles/Video
   const handleEventClick = (clickInfo) => {
     setSelectedEvent(clickInfo.event);
     setIsEventModalOpen(true);
   }
 
-  // --- RENDERIZADO CONDICIONAL ---
+  // NUEVO: Manejar cuando se suelta una cita arrastrada
+  const handleEventDrop = async (dropInfo) => {
+    const citaId = dropInfo.event.id;
+    const newStart = dropInfo.event.start;
 
-  if (!token) {
-    return <Login onLogin={setToken} />;
-  }
+    // Confirmación visual optimista (ya se movió en pantalla)
+    // Ahora avisamos al servidor
+    try {
+      await axios.put(`https://cisd-api.onrender.com/api/appointments/${citaId}`, {
+        newStartTime: newStart
+      });
+      console.log("Cita movida exitosamente");
+      // Opcional: cargarCitas() para asegurar sincronización, pero no es estrictamente necesario si confías en el UI
+    } catch (error) {
+      console.error("Error al mover la cita", error);
+      alert("No se pudo mover la cita. Volviendo a posición original.");
+      dropInfo.revert(); // Devuelve el bloque a su lugar si falla el servidor
+    }
+  };
+
+  // --- RENDER ---
+
+  if (!token) return <Login onLogin={setToken} />;
 
   if (!profesionales) {
     return (
@@ -165,13 +173,14 @@ function App() {
           allDaySlot={false}
           height="auto"
           events={citas}
-          dateClick={handleDateClick}  // Clic en blanco
-          eventClick={handleEventClick} // Clic en evento (NUEVO)
+          editable={true} // <--- PERMITE ARRASTRAR
+          eventDrop={handleEventDrop} // <--- GESTIONA EL CAMBIO
+          dateClick={handleDateClick}
+          eventClick={handleEventClick}
           nowIndicator={true}
         />
       </div>
 
-      {/* Modal para Crear Cita */}
       <AppointmentModal 
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -180,12 +189,11 @@ function App() {
         onSuccess={cargarCitas} 
       />
 
-      {/* Modal para Ver Detalles y Borrar */}
       <EventModal 
         isOpen={isEventModalOpen}
         onClose={() => setIsEventModalOpen(false)}
         event={selectedEvent}
-        onDeleteSuccess={cargarCitas} /* <--- ¡AQUÍ ESTÁ LA MAGIA! */
+        onDeleteSuccess={cargarCitas}
       />
 
     </div>

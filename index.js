@@ -27,7 +27,7 @@ oauth2Client.setCredentials({
 
 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-// --- RUTAS EXISTENTES ---
+// --- RUTAS ---
 
 // 1. LOGIN
 app.post('/api/login', async (req, res) => {
@@ -95,7 +95,6 @@ app.post('/api/appointments', async (req, res) => {
     let meetLink = null;
     let googleEventId = null;
 
-    // Crear en Google si corresponde
     const isTelemedicina = service.isTelemed || service.name.toLowerCase().includes('tele');
 
     if (isTelemedicina) {
@@ -141,40 +140,76 @@ app.post('/api/appointments', async (req, res) => {
   }
 });
 
-// --- RUTA NUEVA: 4. ELIMINAR CITA ---
+// 4. ELIMINAR CITA
 app.delete('/api/appointments/:id', async (req, res) => {
   const { id } = req.params;
-
   try {
-    // 1. Buscar la cita para ver si tiene evento de Google
     const appointment = await prisma.appointment.findUnique({ where: { id: parseInt(id) } });
-    
-    if (!appointment) {
-      return res.status(404).json({ error: 'Cita no encontrada' });
-    }
+    if (!appointment) return res.status(404).json({ error: 'Cita no encontrada' });
 
-    // 2. Si tiene ID de Google, lo borramos de la nube
     if (appointment.googleEventId) {
       try {
-        await calendar.events.delete({
+        await calendar.events.delete({ calendarId: 'primary', eventId: appointment.googleEventId });
+      } catch (gError) { console.error("Error Google Delete:", gError.message); }
+    }
+
+    await prisma.appointment.delete({ where: { id: parseInt(id) } });
+    res.json({ message: 'Cita eliminada' });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al eliminar' });
+  }
+});
+
+// --- RUTA NUEVA: 5. EDITAR CITA (DRAG & DROP) ---
+app.put('/api/appointments/:id', async (req, res) => {
+  const { id } = req.params;
+  const { newStartTime } = req.body; // Solo recibimos la nueva hora de inicio
+
+  try {
+    // 1. Buscamos la cita original
+    const appointment = await prisma.appointment.findUnique({ 
+      where: { id: parseInt(id) },
+      include: { service: true } 
+    });
+
+    if (!appointment) return res.status(404).json({ error: 'Cita no encontrada' });
+
+    // 2. Calculamos la nueva hora de fin manteniendo la duración original
+    const newStart = new Date(newStartTime);
+    const durationMs = appointment.endTime.getTime() - appointment.startTime.getTime();
+    const newEnd = new Date(newStart.getTime() + durationMs);
+
+    // 3. Si tiene Google Event, lo actualizamos en la nube
+    if (appointment.googleEventId) {
+      try {
+        await calendar.events.patch({
           calendarId: 'primary',
-          eventId: appointment.googleEventId
+          eventId: appointment.googleEventId,
+          requestBody: {
+            start: { dateTime: newStart.toISOString() },
+            end: { dateTime: newEnd.toISOString() }
+          }
         });
-        console.log("Evento eliminado de Google Calendar correctamente.");
+        console.log("Cita movida en Google Calendar correctamente.");
       } catch (gError) {
-        console.error("Error al borrar de Google (puede que ya no exista):", gError.message);
-        // Seguimos adelante para borrarla de la base de datos local aunque falle Google
+        console.error("Error moviendo evento en Google:", gError.message);
       }
     }
 
-    // 3. Borrar de la base de datos local
-    await prisma.appointment.delete({ where: { id: parseInt(id) } });
+    // 4. Actualizamos la Base de Datos Local
+    const updatedAppointment = await prisma.appointment.update({
+      where: { id: parseInt(id) },
+      data: {
+        startTime: newStart,
+        endTime: newEnd
+      }
+    });
 
-    res.json({ message: 'Cita eliminada correctamente' });
+    res.json(updatedAppointment);
 
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Error al eliminar la cita' });
+    res.status(500).json({ error: 'Error al mover la cita' });
   }
 });
 

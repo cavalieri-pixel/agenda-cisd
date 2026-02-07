@@ -1,4 +1,4 @@
-require('dotenv').config(); // <--- IMPORTANTE: Carga el archivo .env
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { PrismaClient } = require('@prisma/client');
@@ -14,8 +14,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'secret_cisd_key_2026';
 app.use(cors());
 app.use(express.json());
 
-// --- CONFIGURACIÓN DE GOOGLE CALENDAR (SEGURA) ---
-// Ahora lee las variables desde process.env (el archivo oculto)
+// --- CONFIGURACIÓN DE GOOGLE CALENDAR ---
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
@@ -28,7 +27,9 @@ oauth2Client.setCredentials({
 
 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-// --- RUTA 1: LOGIN ---
+// --- RUTAS EXISTENTES ---
+
+// 1. LOGIN
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   try {
@@ -49,7 +50,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// --- RUTA 2: OBTENER DATOS ---
+// 2. GET DATOS
 app.get('/api/professionals', async (req, res) => {
   const professionals = await prisma.professional.findMany();
   res.json(professionals);
@@ -63,7 +64,6 @@ app.get('/api/appointments', async (req, res) => {
         professionalId: parseInt(professionalId),
         startTime: { gte: new Date(start) },
         endTime: { lte: new Date(end) },
-        status: 'CONFIRMED'
       },
       include: { patient: true, service: true }
     });
@@ -78,31 +78,28 @@ app.get('/api/services', async (req, res) => {
   res.json(services);
 });
 
-// --- RUTA 3: CREAR CITA (CON GOOGLE MEET) ---
+// 3. CREAR CITA
 app.post('/api/appointments', async (req, res) => {
   const { professionalId, rut, patientName, patientEmail, serviceCode, startTime } = req.body;
 
   try {
-    // 1. Buscar Paciente y Servicio
     let patient = await prisma.patient.findUnique({ where: { rut } });
     if (!patient) {
       patient = await prisma.patient.create({ data: { rut, name: patientName, email: patientEmail } });
     }
     const service = await prisma.service.findUnique({ where: { code: serviceCode } });
     
-    // 2. Calcular Fechas
     const start = new Date(startTime);
     const end = new Date(start.getTime() + service.durationMin * 60000);
 
     let meetLink = null;
     let googleEventId = null;
 
-    // 3. SI ES TELEMEDICINA -> CREAR EVENTO EN GOOGLE
+    // Crear en Google si corresponde
     const isTelemedicina = service.isTelemed || service.name.toLowerCase().includes('tele');
 
     if (isTelemedicina) {
       try {
-        console.log("Generando enlace de Google Meet...");
         const response = await calendar.events.insert({
           calendarId: 'primary',
           conferenceDataVersion: 1, 
@@ -114,22 +111,16 @@ app.post('/api/appointments', async (req, res) => {
             conferenceData: {
               createRequest: { requestId: "cisd-" + Date.now(), conferenceSolutionKey: { type: "hangoutsMeet" } }
             },
-            attendees: [
-              { email: patientEmail } 
-            ]
+            attendees: [{ email: patientEmail }] 
           }
         });
-
         meetLink = response.data.hangoutLink; 
         googleEventId = response.data.id;
-        console.log("Link creado:", meetLink);
-
       } catch (googleError) {
-        console.error("Error conectando con Google Calendar:", googleError);
+        console.error("Error Google:", googleError);
       }
     }
 
-    // 4. Guardar en Base de Datos
     const appointment = await prisma.appointment.create({
       data: {
         startTime: start,
@@ -144,13 +135,49 @@ app.post('/api/appointments', async (req, res) => {
     });
 
     res.json(appointment);
-
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Error al crear la cita' });
   }
 });
 
+// --- RUTA NUEVA: 4. ELIMINAR CITA ---
+app.delete('/api/appointments/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // 1. Buscar la cita para ver si tiene evento de Google
+    const appointment = await prisma.appointment.findUnique({ where: { id: parseInt(id) } });
+    
+    if (!appointment) {
+      return res.status(404).json({ error: 'Cita no encontrada' });
+    }
+
+    // 2. Si tiene ID de Google, lo borramos de la nube
+    if (appointment.googleEventId) {
+      try {
+        await calendar.events.delete({
+          calendarId: 'primary',
+          eventId: appointment.googleEventId
+        });
+        console.log("Evento eliminado de Google Calendar correctamente.");
+      } catch (gError) {
+        console.error("Error al borrar de Google (puede que ya no exista):", gError.message);
+        // Seguimos adelante para borrarla de la base de datos local aunque falle Google
+      }
+    }
+
+    // 3. Borrar de la base de datos local
+    await prisma.appointment.delete({ where: { id: parseInt(id) } });
+
+    res.json({ message: 'Cita eliminada correctamente' });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al eliminar la cita' });
+  }
+});
+
 app.listen(port, () => {
-  console.log(`🚀 Servidor CISD conectado a Google en http://localhost:${port}`);
+  console.log(`🚀 Servidor CISD corriendo en http://localhost:${port}`);
 });

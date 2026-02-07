@@ -6,7 +6,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import axios from 'axios';
 import AppointmentModal from './components/AppointmentModal';
 import Login from './components/Login';
-import EventModal from './components/EventModal'; // <--- IMPORTANTE: Importamos el nuevo modal
+import EventModal from './components/EventModal'; // <--- Importamos el modal de detalles
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
@@ -180,11 +180,12 @@ function App() {
         onSuccess={cargarCitas} 
       />
 
-      {/* Modal para Ver Detalles y Video (NUEVO) */}
+      {/* Modal para Ver Detalles y Borrar */}
       <EventModal 
         isOpen={isEventModalOpen}
         onClose={() => setIsEventModalOpen(false)}
         event={selectedEvent}
+        onDeleteSuccess={cargarCitas} /* <--- ¡AQUÍ ESTÁ LA MAGIA! */
       />
 
     </div>

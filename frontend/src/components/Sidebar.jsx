@@ -4,6 +4,7 @@ export default function Sidebar({ activeView, setActiveView, onLogout }) {
   
   const menuItems = [
     { id: 'agenda', label: '📅 Agenda', icon: '📅' },
+    { id: 'patients', label: '👥 Pacientes', icon: '👥' }, // <--- Nuevo botón
     { id: 'professionals', label: '👨‍⚕️ Profesionales', icon: '👨‍⚕️' },
     { id: 'services', label: '🏥 Especialidades', icon: '🏥' },
     { id: 'schedule', label: '⏰ Horarios', icon: '⏰' },

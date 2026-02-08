@@ -52,6 +52,74 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// --- NUEVO: GESTIÓN DE PACIENTES ---
+
+// Obtener todos
+app.get('/api/patients', async (req, res) => {
+  try {
+    const patients = await prisma.patient.findMany({ orderBy: { name: 'asc' } });
+    res.json(patients);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener pacientes' });
+  }
+});
+
+// Crear Paciente
+app.post('/api/patients', async (req, res) => {
+  const { rut, name, email, phone } = req.body;
+  try {
+    const newPatient = await prisma.patient.create({
+      data: { rut, name, email, phone }
+    });
+    res.json(newPatient);
+  } catch (error) {
+    if (error.code === 'P2002') return res.status(400).json({ error: 'El RUT ya existe' });
+    res.status(500).json({ error: 'Error al crear paciente' });
+  }
+});
+
+// Editar Paciente
+app.put('/api/patients/:id', async (req, res) => {
+  const { id } = req.params;
+  const { rut, name, email, phone } = req.body;
+  try {
+    const updated = await prisma.patient.update({
+      where: { id: parseInt(id) },
+      data: { rut, name, email, phone }
+    });
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al actualizar paciente' });
+  }
+});
+
+// Eliminar Paciente
+app.delete('/api/patients/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await prisma.patient.delete({ where: { id: parseInt(id) } });
+    res.json({ message: 'Paciente eliminado' });
+  } catch (error) {
+    res.status(500).json({ error: 'No se puede eliminar (probablemente tenga citas asociadas)' });
+  }
+});
+
+// Obtener Historial de un Paciente
+app.get('/api/patients/:id/history', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const history = await prisma.appointment.findMany({
+      where: { patientId: parseInt(id) },
+      include: { service: true, professional: true },
+      orderBy: { startTime: 'desc' }
+    });
+    res.json(history);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener historial' });
+  }
+});
+
+
 // --- 3. GESTIÓN DE PROFESIONALES (CRUD + CSV) ---
 
 // Obtener todos

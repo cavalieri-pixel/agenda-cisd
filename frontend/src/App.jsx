@@ -8,13 +8,13 @@ import AppointmentModal from './components/AppointmentModal';
 import Login from './components/Login';
 import EventModal from './components/EventModal';
 import Sidebar from './components/Sidebar'; // <--- Sidebar Nuevo
-import { ProfessionalsView, ServicesView, ScheduleView } from './components/AdminModules'; // <--- Módulos Nuevos
+import { ProfessionalsView, ServicesView, ScheduleView, PatientsView } from './components/AdminModules'; // <--- Módulos Nuevos (Incluye Pacientes)
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
   
   // NAVEGACIÓN
-  const [activeView, setActiveView] = useState('agenda'); // 'agenda', 'professionals', 'services', 'schedule'
+  const [activeView, setActiveView] = useState('agenda'); // 'agenda', 'professionals', 'services', 'schedule', 'patients'
 
   // ESTADO AGENDA
   const [profesionales, setProfesionales] = useState(null); 
@@ -139,6 +139,7 @@ function App() {
         )}
 
         {/* VISTAS: MÓDULOS DE ADMINISTRACIÓN */}
+        {activeView === 'patients' && <PatientsView />}  {/* <--- NUEVO */}
         {activeView === 'professionals' && <ProfessionalsView />}
         {activeView === 'services' && <ServicesView />}
         {activeView === 'schedule' && <ScheduleView />}

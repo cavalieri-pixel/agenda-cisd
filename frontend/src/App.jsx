@@ -7,29 +7,86 @@ import axios from 'axios';
 import AppointmentModal from './components/AppointmentModal';
 import Login from './components/Login';
 import EventModal from './components/EventModal';
-import Sidebar from './components/Sidebar'; // <--- Sidebar Nuevo
-import { ProfessionalsView, ServicesView, ScheduleView, PatientsView } from './components/AdminModules'; // <--- Módulos Nuevos (Incluye Pacientes)
+import Sidebar from './components/Sidebar';
+import { ProfessionalsView, ServicesView, ScheduleView, PatientsView } from './components/AdminModules';
+import BookingWizard from './components/BookingWizard'; // <--- IMPORTAR
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
   
-  // NAVEGACIÓN
-  const [activeView, setActiveView] = useState('agenda'); // 'agenda', 'professionals', 'services', 'schedule', 'patients'
+  // MODOS DE VISTA: 'landing', 'login', 'admin', 'booking'
+  const [viewMode, setViewMode] = useState(token ? 'admin' : 'landing');
 
-  // ESTADO AGENDA
+  // ADMIN STATES
+  const [activeView, setActiveView] = useState('agenda');
   const [profesionales, setProfesionales] = useState(null); 
   const [citas, setCitas] = useState([]);
   const [profesionalSeleccionado, setProfesionalSeleccionado] = useState(null);
   
-  // MODALES AGENDA
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
 
-  const handleLogout = () => { localStorage.removeItem('token'); window.location.reload(); };
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setToken(null);
+    setViewMode('landing');
+    window.location.reload(); 
+  };
 
-  // --- CARGA DE DATOS ---
+  // --- MODO: AGENDAMIENTO PÚBLICO ---
+  if (viewMode === 'booking') {
+    return <BookingWizard onCancel={() => setViewMode('landing')} />;
+  }
+
+  // --- MODO: LANDING (PORTADA) ---
+  if (viewMode === 'landing') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-slate-900 flex items-center justify-center p-4">
+        <div className="text-center text-white max-w-2xl">
+          <div className="mb-8 flex justify-center">
+            <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-2xl">
+              <span className="text-4xl font-bold text-blue-900">C</span>
+            </div>
+          </div>
+          <h1 className="text-5xl font-bold mb-4 tracking-tight">Centro Integral CISD</h1>
+          <p className="text-xl text-blue-200 mb-12">Salud y bienestar en un solo lugar.</p>
+          
+          <div className="flex flex-col sm:flex-row gap-6 justify-center">
+            <button 
+              onClick={() => setViewMode('booking')}
+              className="px-8 py-4 bg-green-500 hover:bg-green-400 text-white rounded-xl font-bold text-lg shadow-lg transform hover:scale-105 transition-all flex items-center justify-center gap-2"
+            >
+              📅 Agendar Hora
+            </button>
+            <button 
+              onClick={() => setViewMode('login')}
+              className="px-8 py-4 bg-white/10 hover:bg-white/20 text-white border border-white/30 rounded-xl font-bold text-lg backdrop-blur-sm transition-all"
+            >
+              🔐 Acceso Profesionales
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- MODO: LOGIN ---
+  if (viewMode === 'login' && !token) {
+    return (
+      <div className="relative">
+        <button onClick={() => setViewMode('landing')} className="absolute top-4 left-4 text-gray-600 font-bold">← Volver</button>
+        <Login onLogin={(t) => { setToken(t); setViewMode('admin'); }} />
+      </div>
+    );
+  }
+
+  // ==========================================
+  //          MODO: ADMIN / AGENDA INTERNA
+  // ==========================================
+
+  // --- LOGICA ADMIN ---
   const cargarProfesionales = () => {
     axios.get('https://cisd-api.onrender.com/api/professionals')
       .then((res) => {
@@ -39,7 +96,7 @@ function App() {
       .catch((e) => { if (e.response && e.response.status === 401) handleLogout(); });
   };
 
-  useEffect(() => { if (token) cargarProfesionales(); }, [token]);
+  useEffect(() => { if (token && viewMode === 'admin') cargarProfesionales(); }, [token, viewMode]);
 
   const cargarCitas = () => {
     if (profesionalSeleccionado) {
@@ -61,7 +118,7 @@ function App() {
     }
   };
 
-  useEffect(() => { cargarCitas(); }, [profesionalSeleccionado, activeView]); // Recargar al volver a agenda
+  useEffect(() => { if(viewMode === 'admin') cargarCitas(); }, [profesionalSeleccionado, activeView, viewMode]);
 
   const obtenerColorProfesional = (id) => {
     if (!profesionales) return '#3788d8';
@@ -69,7 +126,6 @@ function App() {
     return prof ? prof.color : '#3788d8';
   }
 
-  // --- MANEJADORES AGENDA ---
   const handleDateClick = (arg) => { setSelectedDate(arg.dateStr); setIsModalOpen(true); }
   const handleEventClick = (info) => { setSelectedEvent(info.event); setIsEventModalOpen(true); }
   const handleEventDrop = async (info) => {
@@ -77,41 +133,23 @@ function App() {
     catch { info.revert(); alert("Error al mover"); }
   };
 
-  // --- RENDERIZADO PRINCIPAL ---
-  if (!token) return <Login onLogin={setToken} />;
-  if (!profesionales) return <div className="h-screen flex items-center justify-center">Cargando...</div>;
+  if (!profesionales && viewMode === 'admin') return <div className="h-screen flex items-center justify-center">Cargando sistema...</div>;
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
-      
-      {/* 1. SIDEBAR IZQUIERDO */}
       <Sidebar activeView={activeView} setActiveView={setActiveView} onLogout={handleLogout} />
-
-      {/* 2. ÁREA DE CONTENIDO PRINCIPAL */}
       <main className="flex-1 overflow-y-auto relative">
-        
-        {/* VISTA: AGENDA */}
         {activeView === 'agenda' && (
           <div className="p-6">
-            {/* Barra superior de la agenda */}
             <div className="bg-white p-4 rounded-xl shadow-sm mb-6 flex justify-between items-center border border-gray-100">
-               <div>
-                 <h2 className="text-2xl font-bold text-gray-800">Agenda Médica</h2>
-                 <p className="text-gray-500 text-sm">Vista semanal</p>
-               </div>
+               <div><h2 className="text-2xl font-bold text-gray-800">Agenda Médica</h2><p className="text-gray-500 text-sm">Vista semanal</p></div>
                <div className="flex items-center gap-3 bg-gray-50 px-4 py-2 rounded-lg border">
-                 <span className="text-sm font-bold text-gray-600">Ver Agenda de:</span>
-                 <select 
-                   className="bg-transparent font-medium text-blue-700 outline-none"
-                   value={profesionalSeleccionado || ''}
-                   onChange={(e) => setProfesionalSeleccionado(e.target.value)}
-                 >
+                 <span className="text-sm font-bold text-gray-600">Ver:</span>
+                 <select className="bg-transparent font-medium text-blue-700 outline-none" value={profesionalSeleccionado || ''} onChange={(e) => setProfesionalSeleccionado(e.target.value)}>
                    {profesionales.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                  </select>
                </div>
             </div>
-
-            {/* Calendario */}
             <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
               <FullCalendar
                 plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
@@ -131,15 +169,12 @@ function App() {
                 nowIndicator={true}
               />
             </div>
-            
-            {/* Modales de la Agenda */}
             <AppointmentModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} professionalId={profesionalSeleccionado} startTime={selectedDate} onSuccess={cargarCitas} />
             <EventModal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} event={selectedEvent} onDeleteSuccess={cargarCitas} />
           </div>
         )}
 
-        {/* VISTAS: MÓDULOS DE ADMINISTRACIÓN */}
-        {activeView === 'patients' && <PatientsView />}  {/* <--- NUEVO */}
+        {activeView === 'patients' && <PatientsView />}
         {activeView === 'professionals' && <ProfessionalsView />}
         {activeView === 'services' && <ServicesView />}
         {activeView === 'schedule' && <ScheduleView />}

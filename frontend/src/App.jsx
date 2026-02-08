@@ -9,15 +9,13 @@ import Login from './components/Login';
 import EventModal from './components/EventModal';
 import Sidebar from './components/Sidebar';
 import { ProfessionalsView, ServicesView, ScheduleView, PatientsView } from './components/AdminModules';
-import BookingWizard from './components/BookingWizard'; // <--- IMPORTAR
+import BookingWizard from './components/BookingWizard';
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
-  
-  // MODOS DE VISTA: 'landing', 'login', 'admin', 'booking'
-  const [viewMode, setViewMode] = useState(token ? 'admin' : 'landing');
+  const [currentHash, setCurrentHash] = useState(window.location.hash);
 
-  // ADMIN STATES
+  // --- ADMIN STATES ---
   const [activeView, setActiveView] = useState('agenda');
   const [profesionales, setProfesionales] = useState(null); 
   const [citas, setCitas] = useState([]);
@@ -28,75 +26,52 @@ function App() {
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
 
+  // DETECTAR CAMBIO DE URL (ROUTING SIMPLE)
+  useEffect(() => {
+    const handleHashChange = () => setCurrentHash(window.location.hash);
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   const handleLogout = () => {
     localStorage.removeItem('token');
     setToken(null);
-    setViewMode('landing');
     window.location.reload(); 
   };
 
-  // --- MODO: AGENDAMIENTO PÚBLICO ---
-  if (viewMode === 'booking') {
-    return <BookingWizard onCancel={() => setViewMode('landing')} />;
+  // --- LOGICA DE RUTAS ---
+  
+  // 1. RUTA PACIENTE (URL: / o sin hash)
+  if (currentHash !== '#/admin') {
+    return <BookingWizard />;
   }
 
-  // --- MODO: LANDING (PORTADA) ---
-  if (viewMode === 'landing') {
+  // 2. RUTA ADMIN (URL: /#/admin)
+  // Si no hay token, mostrar Login
+  if (!token) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-slate-900 flex items-center justify-center p-4">
-        <div className="text-center text-white max-w-2xl">
-          <div className="mb-8 flex justify-center">
-            <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-2xl">
-              <span className="text-4xl font-bold text-blue-900">C</span>
-            </div>
-          </div>
-          <h1 className="text-5xl font-bold mb-4 tracking-tight">Centro Integral CISD</h1>
-          <p className="text-xl text-blue-200 mb-12">Salud y bienestar en un solo lugar.</p>
-          
-          <div className="flex flex-col sm:flex-row gap-6 justify-center">
-            <button 
-              onClick={() => setViewMode('booking')}
-              className="px-8 py-4 bg-green-500 hover:bg-green-400 text-white rounded-xl font-bold text-lg shadow-lg transform hover:scale-105 transition-all flex items-center justify-center gap-2"
-            >
-              📅 Agendar Hora
-            </button>
-            <button 
-              onClick={() => setViewMode('login')}
-              className="px-8 py-4 bg-white/10 hover:bg-white/20 text-white border border-white/30 rounded-xl font-bold text-lg backdrop-blur-sm transition-all"
-            >
-              🔐 Acceso Profesionales
-            </button>
-          </div>
-        </div>
+      <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
+        <Login onLogin={(t) => setToken(t)} />
+        <a href="/" className="mt-4 text-sm text-gray-500 hover:underline">← Ir al Portal de Pacientes</a>
       </div>
     );
   }
 
-  // --- MODO: LOGIN ---
-  if (viewMode === 'login' && !token) {
-    return (
-      <div className="relative">
-        <button onClick={() => setViewMode('landing')} className="absolute top-4 left-4 text-gray-600 font-bold">← Volver</button>
-        <Login onLogin={(t) => { setToken(t); setViewMode('admin'); }} />
-      </div>
-    );
-  }
+  // --- SISTEMA DE ADMINISTRACIÓN (SOLO SI HAY TOKEN Y HASH ES #/admin) ---
 
-  // ==========================================
-  //          MODO: ADMIN / AGENDA INTERNA
-  // ==========================================
-
-  // --- LOGICA ADMIN ---
   const cargarProfesionales = () => {
     axios.get('https://cisd-api.onrender.com/api/professionals')
       .then((res) => {
         setProfesionales(res.data);
         if (res.data.length > 0 && !profesionalSeleccionado) setProfesionalSeleccionado(res.data[0].id);
       })
-      .catch((e) => { if (e.response && e.response.status === 401) handleLogout(); });
+      .catch((e) => { 
+        console.error(e);
+        if (e.response && e.response.status === 401) handleLogout(); 
+      });
   };
 
-  useEffect(() => { if (token && viewMode === 'admin') cargarProfesionales(); }, [token, viewMode]);
+  useEffect(() => { if (token) cargarProfesionales(); }, [token]);
 
   const cargarCitas = () => {
     if (profesionalSeleccionado) {
@@ -118,7 +93,7 @@ function App() {
     }
   };
 
-  useEffect(() => { if(viewMode === 'admin') cargarCitas(); }, [profesionalSeleccionado, activeView, viewMode]);
+  useEffect(() => { cargarCitas(); }, [profesionalSeleccionado, activeView]);
 
   const obtenerColorProfesional = (id) => {
     if (!profesionales) return '#3788d8';
@@ -133,7 +108,7 @@ function App() {
     catch { info.revert(); alert("Error al mover"); }
   };
 
-  if (!profesionales && viewMode === 'admin') return <div className="h-screen flex items-center justify-center">Cargando sistema...</div>;
+  if (!profesionales) return <div className="h-screen flex items-center justify-center">Cargando sistema...</div>;
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
@@ -144,41 +119,23 @@ function App() {
             <div className="bg-white p-4 rounded-xl shadow-sm mb-6 flex justify-between items-center border border-gray-100">
                <div><h2 className="text-2xl font-bold text-gray-800">Agenda Médica</h2><p className="text-gray-500 text-sm">Vista semanal</p></div>
                <div className="flex items-center gap-3 bg-gray-50 px-4 py-2 rounded-lg border">
-                 <span className="text-sm font-bold text-gray-600">Ver:</span>
+                 <span className="text-sm font-bold text-gray-600">Ver Agenda de:</span>
                  <select className="bg-transparent font-medium text-blue-700 outline-none" value={profesionalSeleccionado || ''} onChange={(e) => setProfesionalSeleccionado(e.target.value)}>
                    {profesionales.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                  </select>
                </div>
             </div>
             <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
-              <FullCalendar
-                plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-                initialView="timeGridWeek"
-                headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' }}
-                locale="es"
-                slotMinTime="08:00:00"
-                slotMaxTime="20:00:00"
-                slotDuration="00:30:00"
-                allDaySlot={false}
-                height="auto"
-                events={citas}
-                editable={true} 
-                eventDrop={handleEventDrop} 
-                dateClick={handleDateClick}
-                eventClick={handleEventClick}
-                nowIndicator={true}
-              />
+              <FullCalendar plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]} initialView="timeGridWeek" headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' }} locale="es" slotMinTime="08:00:00" slotMaxTime="20:00:00" slotDuration="00:30:00" allDaySlot={false} height="auto" events={citas} editable={true} eventDrop={handleEventDrop} dateClick={handleDateClick} eventClick={handleEventClick} nowIndicator={true} />
             </div>
             <AppointmentModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} professionalId={profesionalSeleccionado} startTime={selectedDate} onSuccess={cargarCitas} />
             <EventModal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} event={selectedEvent} onDeleteSuccess={cargarCitas} />
           </div>
         )}
-
         {activeView === 'patients' && <PatientsView />}
         {activeView === 'professionals' && <ProfessionalsView />}
         {activeView === 'services' && <ServicesView />}
         {activeView === 'schedule' && <ScheduleView />}
-
       </main>
     </div>
   );

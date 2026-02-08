@@ -7,6 +7,7 @@ import axios from 'axios';
 import AppointmentModal from './components/AppointmentModal';
 import Login from './components/Login';
 import EventModal from './components/EventModal';
+import AdminPanel from './components/AdminPanel'; // <--- IMPORTANTE: El nuevo panel
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
@@ -21,27 +22,39 @@ function App() {
   const [selectedDate, setSelectedDate] = useState(null);
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [isAdminOpen, setIsAdminOpen] = useState(false); // <--- Estado para el Panel Admin
 
+  // --- 1. FUNCIÓN DE SALIDA (LOGOUT) ---
   const handleLogout = () => {
     localStorage.removeItem('token');
     window.location.reload(); 
   };
 
+  // --- 2. CARGAR PROFESIONALES (Reutilizable) ---
+  const cargarProfesionales = () => {
+    axios.get('https://cisd-api.onrender.com/api/professionals')
+      .then((response) => {
+        setProfesionales(response.data);
+        // Si no hay seleccionado, seleccionar el primero
+        if (response.data.length > 0 && !profesionalSeleccionado) {
+          setProfesionalSeleccionado(response.data[0].id);
+        }
+      })
+      .catch((error) => {
+        console.error("Error cargando profesionales:", error);
+        if (error.response && error.response.status === 401) {
+          handleLogout();
+        }
+      });
+  };
+
   useEffect(() => {
     if (token) {
-      axios.get('https://cisd-api.onrender.com/api/professionals')
-        .then((response) => {
-          setProfesionales(response.data);
-          if (response.data.length > 0) {
-            setProfesionalSeleccionado(response.data[0].id);
-          }
-        })
-        .catch((error) => {
-          if (error.response && error.response.status === 401) handleLogout();
-        });
+      cargarProfesionales();
     }
   }, [token]);
 
+  // --- 3. CARGAR CITAS ---
   const cargarCitas = () => {
     if (profesionalSeleccionado) {
       const start = '2025-01-01'; 
@@ -88,23 +101,19 @@ function App() {
     setIsEventModalOpen(true);
   }
 
-  // NUEVO: Manejar cuando se suelta una cita arrastrada
   const handleEventDrop = async (dropInfo) => {
     const citaId = dropInfo.event.id;
     const newStart = dropInfo.event.start;
 
-    // Confirmación visual optimista (ya se movió en pantalla)
-    // Ahora avisamos al servidor
     try {
       await axios.put(`https://cisd-api.onrender.com/api/appointments/${citaId}`, {
         newStartTime: newStart
       });
       console.log("Cita movida exitosamente");
-      // Opcional: cargarCitas() para asegurar sincronización, pero no es estrictamente necesario si confías en el UI
     } catch (error) {
       console.error("Error al mover la cita", error);
       alert("No se pudo mover la cita. Volviendo a posición original.");
-      dropInfo.revert(); // Devuelve el bloque a su lugar si falla el servidor
+      dropInfo.revert(); 
     }
   };
 
@@ -126,6 +135,7 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50 p-6 font-sans">
       
+      {/* BARRA SUPERIOR */}
       <div className="bg-white p-4 rounded-lg shadow mb-6 flex flex-col sm:flex-row justify-between items-center border-l-4 border-blue-600 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Agenda CISD</h1>
@@ -148,15 +158,24 @@ function App() {
             </select>
           </div>
 
+          {/* Botón CONFIGURACIÓN (NUEVO) */}
+          <button 
+            onClick={() => setIsAdminOpen(true)}
+            className="flex items-center gap-1 text-sm bg-gray-100 text-gray-700 font-medium border border-gray-300 px-3 py-2 rounded hover:bg-gray-200 transition-colors"
+          >
+            ⚙️ <span className="hidden sm:inline">Configuración</span>
+          </button>
+
           <button 
             onClick={handleLogout}
-            className="text-sm text-red-600 hover:text-red-800 font-medium border border-red-200 px-3 py-1 rounded hover:bg-red-50 transition-colors"
+            className="text-sm text-red-600 hover:text-red-800 font-medium border border-red-200 px-3 py-2 rounded hover:bg-red-50 transition-colors"
           >
             Salir
           </button>
         </div>
       </div>
 
+      {/* CALENDARIO */}
       <div className="bg-white p-6 rounded-lg shadow-lg">
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
@@ -173,14 +192,15 @@ function App() {
           allDaySlot={false}
           height="auto"
           events={citas}
-          editable={true} // <--- PERMITE ARRASTRAR
-          eventDrop={handleEventDrop} // <--- GESTIONA EL CAMBIO
+          editable={true} 
+          eventDrop={handleEventDrop} 
           dateClick={handleDateClick}
           eventClick={handleEventClick}
           nowIndicator={true}
         />
       </div>
 
+      {/* MODALES */}
       <AppointmentModal 
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -194,6 +214,17 @@ function App() {
         onClose={() => setIsEventModalOpen(false)}
         event={selectedEvent}
         onDeleteSuccess={cargarCitas}
+      />
+
+      {/* PANEL DE ADMINISTRACIÓN (NUEVO) */}
+      <AdminPanel 
+        isOpen={isAdminOpen} 
+        onClose={() => {
+          setIsAdminOpen(false);
+          // Recargamos datos por si se agregó un médico o cambiaron colores
+          cargarProfesionales();
+          cargarCitas();
+        }} 
       />
 
     </div>

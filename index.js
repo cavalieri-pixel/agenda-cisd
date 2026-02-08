@@ -14,7 +14,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'secret_cisd_key_2026';
 app.use(cors());
 app.use(express.json());
 
-// --- CONFIGURACIÓN DE GOOGLE CALENDAR ---
+// --- 1. CONFIGURACIÓN DE GOOGLE CALENDAR ---
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
@@ -27,9 +27,11 @@ oauth2Client.setCredentials({
 
 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-// --- RUTAS ---
+// ==========================================
+//               RUTAS DE LA API
+// ==========================================
 
-// 1. LOGIN
+// --- 2. AUTENTICACIÓN (LOGIN) ---
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   try {
@@ -44,18 +46,168 @@ app.post('/api/login', async (req, res) => {
       JWT_SECRET,
       { expiresIn: '12h' }
     );
-    res.json({ token, user: { name: professional.name, email: professional.email } });
+    res.json({ token, user: { id: professional.id, name: professional.name, email: professional.email } });
   } catch (error) {
     res.status(500).json({ error: 'Error al iniciar sesión' });
   }
 });
 
-// 2. GET DATOS
+// --- 3. GESTIÓN DE PROFESIONALES (CRUD) ---
+
+// Obtener todos
 app.get('/api/professionals', async (req, res) => {
   const professionals = await prisma.professional.findMany();
   res.json(professionals);
 });
 
+// Crear Profesional
+app.post('/api/professionals', async (req, res) => {
+  const { name, email, password, color, phone } = req.body;
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newProf = await prisma.professional.create({
+      data: { name, email, password: hashedPassword, color, phone }
+    });
+    res.json(newProf);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al crear profesional (quizás el email ya existe)' });
+  }
+});
+
+// Editar Profesional
+app.put('/api/professionals/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, email, color, phone } = req.body;
+  try {
+    const updated = await prisma.professional.update({
+      where: { id: parseInt(id) },
+      data: { name, email, color, phone }
+    });
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al actualizar profesional' });
+  }
+});
+
+// Eliminar Profesional
+app.delete('/api/professionals/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await prisma.professional.delete({ where: { id: parseInt(id) } });
+    res.json({ message: 'Profesional eliminado' });
+  } catch (error) {
+    res.status(500).json({ error: 'No se puede eliminar (probablemente tenga citas asociadas)' });
+  }
+});
+
+// --- 4. GESTIÓN DE SERVICIOS / ESPECIALIDADES (CRUD) ---
+
+// Obtener todos
+app.get('/api/services', async (req, res) => {
+  const services = await prisma.service.findMany();
+  res.json(services);
+});
+
+// Crear Servicio
+app.post('/api/services', async (req, res) => {
+  const { name, code, durationMin, price, isTelemed } = req.body;
+  try {
+    const newService = await prisma.service.create({
+      data: { 
+        name, 
+        code, 
+        durationMin: parseInt(durationMin), 
+        price: parseInt(price), 
+        isTelemed: isTelemed || false 
+      }
+    });
+    res.json(newService);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al crear servicio' });
+  }
+});
+
+// Editar Servicio
+app.put('/api/services/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, durationMin, price, isTelemed } = req.body;
+  try {
+    const updated = await prisma.service.update({
+      where: { id: parseInt(id) },
+      data: { 
+        name, 
+        durationMin: parseInt(durationMin), 
+        price: parseInt(price), 
+        isTelemed 
+      }
+    });
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al actualizar servicio' });
+  }
+});
+
+// Eliminar Servicio
+app.delete('/api/services/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await prisma.service.delete({ where: { id: parseInt(id) } });
+    res.json({ message: 'Servicio eliminado' });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al eliminar servicio' });
+  }
+});
+
+// --- 5. GESTIÓN DE DISPONIBILIDAD (HORARIOS) ---
+
+// Obtener horarios de un médico
+app.get('/api/availability/:professionalId', async (req, res) => {
+  const { professionalId } = req.params;
+  try {
+    const slots = await prisma.availability.findMany({
+      where: { professionalId: parseInt(professionalId) }
+    });
+    res.json(slots);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener horarios' });
+  }
+});
+
+// Guardar horarios (Sobrescribe los anteriores)
+app.post('/api/availability', async (req, res) => {
+  const { professionalId, schedules } = req.body; 
+  // schedules = [{ dayOfWeek: 1, startTime: '09:00', endTime: '13:00' }, ...]
+
+  try {
+    // 1. Limpiar horario anterior
+    await prisma.availability.deleteMany({
+      where: { professionalId: parseInt(professionalId) }
+    });
+
+    // 2. Crear nuevos bloques
+    if (schedules && schedules.length > 0) {
+      await Promise.all(schedules.map(slot => 
+        prisma.availability.create({
+          data: {
+            professionalId: parseInt(professionalId),
+            dayOfWeek: slot.dayOfWeek,
+            startTime: slot.startTime,
+            endTime: slot.endTime
+          }
+        })
+      ));
+    }
+
+    res.json({ message: 'Horarios actualizados correctamente' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al guardar horarios' });
+  }
+});
+
+// --- 6. GESTIÓN DE CITAS (AGENDA) ---
+
+// Obtener Citas (Filtradas por fecha y profesional)
 app.get('/api/appointments', async (req, res) => {
   const { professionalId, start, end } = req.query;
   try {
@@ -73,28 +225,28 @@ app.get('/api/appointments', async (req, res) => {
   }
 });
 
-app.get('/api/services', async (req, res) => {
-  const services = await prisma.service.findMany();
-  res.json(services);
-});
-
-// 3. CREAR CITA
+// Crear Cita (Con integración Google Meet)
 app.post('/api/appointments', async (req, res) => {
   const { professionalId, rut, patientName, patientEmail, serviceCode, startTime } = req.body;
 
   try {
+    // 1. Buscar o Crear Paciente
     let patient = await prisma.patient.findUnique({ where: { rut } });
     if (!patient) {
       patient = await prisma.patient.create({ data: { rut, name: patientName, email: patientEmail } });
     }
-    const service = await prisma.service.findUnique({ where: { code: serviceCode } });
     
+    // 2. Buscar Servicio para calcular duración
+    const service = await prisma.service.findUnique({ where: { code: serviceCode } });
+    if (!service) return res.status(404).json({ error: 'Servicio no encontrado' });
+
     const start = new Date(startTime);
     const end = new Date(start.getTime() + service.durationMin * 60000);
 
     let meetLink = null;
     let googleEventId = null;
 
+    // 3. Crear evento en Google Calendar si es Telemedicina
     const isTelemedicina = service.isTelemed || service.name.toLowerCase().includes('tele');
 
     if (isTelemedicina) {
@@ -116,10 +268,11 @@ app.post('/api/appointments', async (req, res) => {
         meetLink = response.data.hangoutLink; 
         googleEventId = response.data.id;
       } catch (googleError) {
-        console.error("Error Google:", googleError);
+        console.error("Error conectando con Google Calendar:", googleError);
       }
     }
 
+    // 4. Guardar Cita en Base de Datos
     const appointment = await prisma.appointment.create({
       data: {
         startTime: start,
@@ -140,33 +293,12 @@ app.post('/api/appointments', async (req, res) => {
   }
 });
 
-// 4. ELIMINAR CITA
-app.delete('/api/appointments/:id', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const appointment = await prisma.appointment.findUnique({ where: { id: parseInt(id) } });
-    if (!appointment) return res.status(404).json({ error: 'Cita no encontrada' });
-
-    if (appointment.googleEventId) {
-      try {
-        await calendar.events.delete({ calendarId: 'primary', eventId: appointment.googleEventId });
-      } catch (gError) { console.error("Error Google Delete:", gError.message); }
-    }
-
-    await prisma.appointment.delete({ where: { id: parseInt(id) } });
-    res.json({ message: 'Cita eliminada' });
-  } catch (error) {
-    res.status(500).json({ error: 'Error al eliminar' });
-  }
-});
-
-// --- RUTA NUEVA: 5. EDITAR CITA (DRAG & DROP) ---
+// Mover Cita (Drag & Drop - Actualiza Google Calendar)
 app.put('/api/appointments/:id', async (req, res) => {
   const { id } = req.params;
-  const { newStartTime } = req.body; // Solo recibimos la nueva hora de inicio
+  const { newStartTime } = req.body;
 
   try {
-    // 1. Buscamos la cita original
     const appointment = await prisma.appointment.findUnique({ 
       where: { id: parseInt(id) },
       include: { service: true } 
@@ -174,12 +306,11 @@ app.put('/api/appointments/:id', async (req, res) => {
 
     if (!appointment) return res.status(404).json({ error: 'Cita no encontrada' });
 
-    // 2. Calculamos la nueva hora de fin manteniendo la duración original
     const newStart = new Date(newStartTime);
     const durationMs = appointment.endTime.getTime() - appointment.startTime.getTime();
     const newEnd = new Date(newStart.getTime() + durationMs);
 
-    // 3. Si tiene Google Event, lo actualizamos en la nube
+    // Actualizar en Google Calendar
     if (appointment.googleEventId) {
       try {
         await calendar.events.patch({
@@ -196,7 +327,7 @@ app.put('/api/appointments/:id', async (req, res) => {
       }
     }
 
-    // 4. Actualizamos la Base de Datos Local
+    // Actualizar en BD Local
     const updatedAppointment = await prisma.appointment.update({
       where: { id: parseInt(id) },
       data: {
@@ -206,13 +337,45 @@ app.put('/api/appointments/:id', async (req, res) => {
     });
 
     res.json(updatedAppointment);
-
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Error al mover la cita' });
   }
 });
 
+// Eliminar Cita (Borra de Google Calendar también)
+app.delete('/api/appointments/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const appointment = await prisma.appointment.findUnique({ where: { id: parseInt(id) } });
+    
+    if (!appointment) return res.status(404).json({ error: 'Cita no encontrada' });
+
+    // Borrar de Google Calendar
+    if (appointment.googleEventId) {
+      try {
+        await calendar.events.delete({
+          calendarId: 'primary',
+          eventId: appointment.googleEventId
+        });
+        console.log("Evento eliminado de Google Calendar.");
+      } catch (gError) {
+        console.error("Error al borrar de Google:", gError.message);
+      }
+    }
+
+    // Borrar de BD Local
+    await prisma.appointment.delete({ where: { id: parseInt(id) } });
+
+    res.json({ message: 'Cita eliminada correctamente' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al eliminar la cita' });
+  }
+});
+
+// --- INICIAR SERVIDOR ---
 app.listen(port, () => {
-  console.log(`🚀 Servidor CISD corriendo en http://localhost:${port}`);
+  console.log(`🚀 Servidor CISD Completo corriendo en http://localhost:${port}`);
 });

@@ -12,95 +12,86 @@ import { ProfessionalsView, ServicesView, ScheduleView, PatientsView } from './c
 import BookingWizard from './components/BookingWizard';
 
 function App() {
+  // 1. HOOKS PRIMERO (SIEMPRE ARRIBA)
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [currentHash, setCurrentHash] = useState(window.location.hash);
-
-  // --- ADMIN STATES ---
+  
+  // Admin States
   const [activeView, setActiveView] = useState('agenda');
-  const [profesionales, setProfesionales] = useState(null); 
+  const [profesionales, setProfesionales] = useState([]); 
   const [citas, setCitas] = useState([]);
   const [profesionalSeleccionado, setProfesionalSeleccionado] = useState(null);
   
+  // Modales
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
 
-  // DETECTAR CAMBIO DE URL (ROUTING SIMPLE)
+  // 2. EFECTOS (Side Effects)
+  
+  // Detectar cambio de URL (Hash)
   useEffect(() => {
     const handleHashChange = () => setCurrentHash(window.location.hash);
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
+  // Cargar datos administrativos (Solo si hay token y estamos en admin)
+  useEffect(() => {
+    if (token && currentHash === '#/admin') {
+      axios.get('https://cisd-api.onrender.com/api/professionals')
+        .then((res) => {
+          setProfesionales(res.data);
+          if (res.data.length > 0 && !profesionalSeleccionado) {
+            setProfesionalSeleccionado(res.data[0].id);
+          }
+        })
+        .catch((e) => { 
+          if (e.response && e.response.status === 401) handleLogout(); 
+        });
+    }
+  }, [token, currentHash]);
+
+  // Cargar citas cuando cambia el profesional
+  useEffect(() => {
+    if (token && currentHash === '#/admin' && profesionalSeleccionado) {
+      cargarCitas();
+    }
+  }, [profesionalSeleccionado, activeView, token, currentHash]);
+
+  // 3. FUNCIONES AUXILIARES
   const handleLogout = () => {
     localStorage.removeItem('token');
     setToken(null);
-    window.location.reload(); 
+    window.location.href = '/'; // Redirigir al home
   };
-
-  // --- LOGICA DE RUTAS ---
-  
-  // 1. RUTA PACIENTE (URL: / o sin hash)
-  if (currentHash !== '#/admin') {
-    return <BookingWizard />;
-  }
-
-  // 2. RUTA ADMIN (URL: /#/admin)
-  // Si no hay token, mostrar Login
-  if (!token) {
-    return (
-      <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
-        <Login onLogin={(t) => setToken(t)} />
-        <a href="/" className="mt-4 text-sm text-gray-500 hover:underline">← Ir al Portal de Pacientes</a>
-      </div>
-    );
-  }
-
-  // --- SISTEMA DE ADMINISTRACIÓN (SOLO SI HAY TOKEN Y HASH ES #/admin) ---
-
-  const cargarProfesionales = () => {
-    axios.get('https://cisd-api.onrender.com/api/professionals')
-      .then((res) => {
-        setProfesionales(res.data);
-        if (res.data.length > 0 && !profesionalSeleccionado) setProfesionalSeleccionado(res.data[0].id);
-      })
-      .catch((e) => { 
-        console.error(e);
-        if (e.response && e.response.status === 401) handleLogout(); 
-      });
-  };
-
-  useEffect(() => { if (token) cargarProfesionales(); }, [token]);
 
   const cargarCitas = () => {
-    if (profesionalSeleccionado) {
-      axios.get('https://cisd-api.onrender.com/api/appointments', {
-        params: { professionalId: profesionalSeleccionado, start: '2025-01-01', end: '2026-12-31' }
-      })
-      .then((res) => {
-        const eventos = res.data.map(cita => ({
-          id: cita.id,
-          title: cita.service ? `${cita.patient.name} - ${cita.service.name}` : 'Bloqueado',
-          start: cita.startTime,
-          end: cita.endTime,
-          backgroundColor: obtenerColorProfesional(profesionalSeleccionado),
-          borderColor: obtenerColorProfesional(profesionalSeleccionado),
-          extendedProps: { ...cita } 
-        }));
-        setCitas(eventos);
-      });
-    }
+    if (!profesionalSeleccionado) return;
+    axios.get('https://cisd-api.onrender.com/api/appointments', {
+      params: { professionalId: profesionalSeleccionado, start: '2025-01-01', end: '2026-12-31' }
+    })
+    .then((res) => {
+      const eventos = res.data.map(cita => ({
+        id: cita.id,
+        title: cita.service ? `${cita.patient.name} - ${cita.service.name}` : 'Bloqueado',
+        start: cita.startTime,
+        end: cita.endTime,
+        backgroundColor: obtenerColorProfesional(profesionalSeleccionado),
+        extendedProps: { ...cita } 
+      }));
+      setCitas(eventos);
+    });
   };
 
-  useEffect(() => { cargarCitas(); }, [profesionalSeleccionado, activeView]);
-
   const obtenerColorProfesional = (id) => {
-    if (!profesionales) return '#3788d8';
+    if (!profesionales.length) return '#3788d8';
     const prof = profesionales.find(p => p.id === parseInt(id));
     return prof ? prof.color : '#3788d8';
   }
 
+  // Manejadores de Calendario
   const handleDateClick = (arg) => { setSelectedDate(arg.dateStr); setIsModalOpen(true); }
   const handleEventClick = (info) => { setSelectedEvent(info.event); setIsEventModalOpen(true); }
   const handleEventDrop = async (info) => {
@@ -108,6 +99,24 @@ function App() {
     catch { info.revert(); alert("Error al mover"); }
   };
 
+  // 4. RENDERIZADO CONDICIONAL (AL FINAL)
+
+  // A. MODO PACIENTE (Si la URL no es #/admin)
+  if (currentHash !== '#/admin') {
+    return <BookingWizard />;
+  }
+
+  // B. MODO ADMIN - LOGIN (Si es #/admin pero no hay token)
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
+        <Login onLogin={(t) => setToken(t)} />
+        <a href="/" className="mt-6 text-teal-600 font-medium hover:underline">← Volver a Reserva de Horas</a>
+      </div>
+    );
+  }
+
+  // C. MODO ADMIN - DASHBOARD (Si es #/admin y hay token)
   if (!profesionales) return <div className="h-screen flex items-center justify-center">Cargando sistema...</div>;
 
   return (

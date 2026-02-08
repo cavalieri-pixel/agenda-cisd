@@ -4,69 +4,59 @@ import axios from 'axios';
 const API_URL = 'https://cisd-api.onrender.com/api';
 
 export default function BookingWizard() {
-  // PASOS: 1=Identificación, 2=Servicio, 3=Profesional, 4=Hora, 5=Confirmación
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
 
-  // DATOS
+  // DATA
   const [services, setServices] = useState([]);
   const [professionals, setProfessionals] = useState([]);
-  const [availableSlots, setAvailableSlots] = useState([]);
+  const [slots, setSlots] = useState([]);
 
-  // SELECCIONES
-  const [rut, setRut] = useState('');
+  // USER SELECTION
+  const [patientData, setPatientData] = useState({ rut: '', docType: 'Carnet de Identidad', name: '', email: '', phone: '' });
   const [selectedService, setSelectedService] = useState(null);
   const [selectedPro, setSelectedPro] = useState(null);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]); // Hoy
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedTime, setSelectedTime] = useState(null);
-  
-  // DATOS CONTACTO FINAL
-  const [contactInfo, setContactInfo] = useState({ name: '', email: '', phone: '' });
 
-  // CARGA INICIAL
   useEffect(() => {
     axios.get(`${API_URL}/services`).then(res => setServices(res.data));
     axios.get(`${API_URL}/professionals`).then(res => setProfessionals(res.data));
   }, []);
 
-  // CARGAR HORAS CUANDO SE ELIGE PROFESIONAL Y FECHA (PASO 4)
-  useEffect(() => {
-    if (step === 4 && selectedPro && selectedService) {
-      loadSlots();
-    }
-  }, [selectedDate, step]);
-
-  const loadSlots = async () => {
+  // Cargar horas
+  const loadSlots = async (proId, dateStr) => {
     setLoading(true);
-    setAvailableSlots([]);
+    setSlots([]);
     try {
       const res = await axios.get(`${API_URL}/public/slots`, {
-        params: {
-          date: selectedDate,
-          professionalId: selectedPro.id,
-          duration: selectedService.durationMin
-        }
+        params: { date: dateStr, professionalId: proId, duration: selectedService?.durationMin || 30 }
       });
-      setAvailableSlots(res.data);
-    } catch (err) { console.error(err); }
+      setSlots(res.data);
+    } catch (e) { console.error(e); }
     setLoading(false);
   };
 
-  const handleFinalBooking = async () => {
-    if(!contactInfo.name || !contactInfo.email || !contactInfo.phone) return alert("Por favor complete todos los datos");
-    
+  useEffect(() => {
+    if (step === 4 && selectedPro) {
+      loadSlots(selectedPro.id, selectedDate);
+    }
+  }, [step, selectedDate, selectedPro]);
+
+  const handleFinalSubmit = async () => {
+    if (!patientData.email || !patientData.phone) return alert("Complete los datos de contacto");
     setLoading(true);
     try {
       const dateTimeString = `${selectedDate}T${selectedTime}:00`;
       await axios.post(`${API_URL}/appointments`, {
         professionalId: selectedPro.id,
         serviceCode: selectedService.code,
-        rut: rut,
-        patientName: contactInfo.name,
-        patientEmail: contactInfo.email,
+        rut: patientData.rut,
+        patientName: patientData.name || 'Paciente Web', // Nombre opcional si solo piden RUT al inicio
+        patientEmail: patientData.email,
         startTime: new Date(dateTimeString)
       });
-      alert("✅ Reserva Confirmada con Éxito");
+      alert("✅ Reserva Confirmada Correctamente");
       window.location.reload();
     } catch (error) {
       alert("Error al reservar. Intente nuevamente.");
@@ -75,125 +65,150 @@ export default function BookingWizard() {
     }
   };
 
-  // --- COMPONENTES VISUALES ---
-
-  const ProgressBar = () => (
-    <div className="flex justify-between items-center mb-8 px-4 md:px-20">
-      {[1, 2, 3, 4, 5].map(num => (
-        <div key={num} className="flex flex-col items-center relative z-10">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-all ${step >= num ? 'bg-teal-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
-            {num}
+  // --- COMPONENTES UI ---
+  const StepHeader = ({ num, title }) => (
+    <div className="mb-6">
+      <h2 className="text-xl font-bold text-teal-800">Reserva de hora</h2>
+      <p className="text-sm text-gray-600 mb-4">Paso {num}: {title}</p>
+      {/* Progress Bar */}
+      <div className="flex justify-between items-center mb-8 relative">
+        <div className="absolute top-1/2 left-0 w-full h-1 bg-gray-200 -z-10"></div>
+        {[1, 2, 3, 4, 5].map(n => (
+          <div key={n} className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-colors ${step >= n ? 'bg-teal-700 text-white' : 'bg-gray-200 text-gray-500'}`}>
+            {n}
           </div>
-          {num < 5 && <div className={`absolute top-4 left-8 w-[calc(100vw/6)] md:w-32 h-1 -z-10 ${step > num ? 'bg-teal-600' : 'bg-gray-200'}`}></div>}
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans text-gray-700">
-      {/* HEADER */}
-      <header className="bg-white shadow-sm p-4 sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 bg-teal-600 rounded-full flex items-center justify-center text-white font-bold text-xl">C</div>
-            <span className="font-bold text-xl tracking-tight text-teal-800">Agenda CISD</span>
-          </div>
-          <a href="#/admin" className="text-sm text-teal-600 font-medium hover:underline">Soy Profesional</a>
+    <div className="min-h-screen bg-gray-100 font-sans">
+      {/* TOP HEADER */}
+      <header className="bg-white shadow-sm py-4 px-6 flex justify-between items-center sticky top-0 z-50">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 bg-teal-600 rounded-full flex items-center justify-center text-white font-bold">C</div>
+          <span className="font-bold text-teal-800 text-lg">Centro CISD</span>
         </div>
+        <a href="#/admin" className="text-sm text-gray-500 hover:text-teal-600 font-medium">Acceso Profesional</a>
       </header>
 
-      <main className="max-w-4xl mx-auto py-8 px-4">
-        <h1 className="text-3xl font-bold text-center text-teal-800 mb-2">Reserva de hora</h1>
-        <p className="text-center text-gray-500 mb-8">Siga los pasos para agendar su atención</p>
-        
-        <ProgressBar />
-
-        <div className="bg-white rounded-xl shadow-lg p-6 md:p-10 min-h-[400px]">
+      {/* MAIN CONTENT CARD */}
+      <main className="max-w-4xl mx-auto mt-8 p-4">
+        <div className="bg-white rounded-xl shadow-lg p-6 md:p-10 min-h-[500px]">
           
           {/* PASO 1: IDENTIFICACIÓN */}
           {step === 1 && (
-            <div className="animate-fade-in-up">
-              <h2 className="text-xl font-bold text-teal-700 mb-6 border-b pb-2">1. Identificar Paciente</h2>
-              <div className="max-w-md mx-auto">
-                <label className="block text-sm font-bold text-gray-600 mb-2">RUT del Paciente</label>
-                <input 
-                  type="text" 
-                  placeholder="Ej: 12.345.678-9" 
-                  className="w-full p-4 border border-gray-300 rounded-lg text-lg focus:ring-2 focus:ring-teal-500 outline-none transition"
-                  value={rut}
-                  onChange={e => setRut(e.target.value)}
-                />
-                <p className="text-xs text-gray-400 mt-2">Ingrese el RUT sin puntos ni guión (opcional).</p>
-                
-                <button 
-                  onClick={() => rut.length > 3 ? setStep(2) : alert("Ingrese un RUT válido")}
-                  className="w-full mt-8 bg-teal-600 text-white py-3 rounded-lg font-bold hover:bg-teal-700 transition transform active:scale-95"
-                >
-                  CONTINUAR
-                </button>
+            <div className="animate-fade-in">
+              <StepHeader num="1" title="Identificar paciente" />
+              
+              <div className="max-w-lg mx-auto text-center">
+                <h3 className="text-teal-600 font-bold text-xl mb-2">¿PARA QUIÉN ES LA HORA?</h3>
+                <p className="text-gray-500 mb-8 text-sm">Complete los datos del Paciente que será atendido:</p>
+
+                <div className="text-left space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-teal-700 mb-1">Documento de Identificación</label>
+                    <select className="w-full p-3 border border-gray-300 rounded-lg bg-white">
+                      <option>Carnet de Identidad</option>
+                      <option>Pasaporte</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-red-700 mb-1">RUT del Paciente</label>
+                    <input 
+                      type="text" 
+                      placeholder="Ej: 12.345.678-9" 
+                      className="w-full p-3 border border-red-300 rounded-lg focus:ring-2 focus:ring-red-200 outline-none"
+                      value={patientData.rut}
+                      onChange={e => setPatientData({...patientData, rut: e.target.value})}
+                    />
+                    <p className="text-xs text-gray-400 mt-1">Ingrese RUT del paciente</p>
+                  </div>
+
+                  <button 
+                    onClick={() => patientData.rut.length > 3 ? setStep(2) : alert("Ingrese un RUT válido")}
+                    className="w-full mt-6 bg-gray-300 hover:bg-teal-600 text-white font-bold py-3 rounded-full transition-colors"
+                  >
+                    CONTINUAR
+                  </button>
+                </div>
               </div>
             </div>
           )}
 
-          {/* PASO 2: SELECCIÓN SERVICIO */}
+          {/* PASO 2: SELECCIONAR SERVICIO (GRID) */}
           {step === 2 && (
-            <div className="animate-fade-in-up">
-              <h2 className="text-xl font-bold text-teal-700 mb-6 border-b pb-2">2. ¿Qué servicio necesita?</h2>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {services.map(serv => (
+            <div className="animate-fade-in">
+              <StepHeader num="2" title="Seleccionar servicio" />
+              
+              <h3 className="text-center text-teal-600 font-bold text-xl mb-6">¿QUÉ SERVICIO NECESITA AGENDAR?</h3>
+              
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {services.map(srv => (
                   <button 
-                    key={serv.id}
-                    onClick={() => { setSelectedService(serv); setStep(3); }}
-                    className="flex flex-col items-center justify-center p-6 border-2 border-gray-100 rounded-xl hover:border-teal-500 hover:bg-teal-50 transition group"
+                    key={srv.id}
+                    onClick={() => { setSelectedService(srv); setStep(3); }}
+                    className="flex flex-col items-center justify-center p-6 bg-teal-50 rounded-lg hover:bg-teal-600 hover:text-white transition group border border-teal-100 h-32"
                   >
-                    <span className="text-3xl mb-2 group-hover:scale-110 transition">🏥</span>
-                    <span className="font-bold text-center text-gray-700 group-hover:text-teal-700">{serv.name}</span>
-                    {serv.isTelemed && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded mt-2">Online</span>}
+                    <span className="text-3xl mb-2">🏥</span>
+                    <span className="font-bold text-sm text-center leading-tight">{srv.name}</span>
                   </button>
                 ))}
               </div>
-              <button onClick={() => setStep(1)} className="mt-8 text-gray-400 hover:text-gray-600 underline">Volver atrás</button>
+              
+              <button onClick={() => setStep(1)} className="mt-8 text-teal-600 text-sm font-bold">{'< VOLVER AL PASO ANTERIOR'}</button>
             </div>
           )}
 
-          {/* PASO 3: SELECCIÓN PROFESIONAL */}
+          {/* PASO 3: SELECCIONAR ESPECIALIDAD/PROFESIONAL */}
           {step === 3 && (
-            <div className="animate-fade-in-up">
-              <h2 className="text-xl font-bold text-teal-700 mb-6 border-b pb-2">3. Elija Profesional</h2>
-              <p className="mb-4 text-sm text-gray-500">Mostrando especialistas para: <strong>{selectedService.name}</strong></p>
+            <div className="animate-fade-in">
+              <StepHeader num="3" title="Seleccionar profesional" />
               
+              <div className="bg-gray-100 p-1 rounded-lg flex mb-6 max-w-md mx-auto">
+                <button className="flex-1 bg-white shadow-sm py-2 rounded-md font-bold text-teal-700 text-sm">Búsqueda por profesional</button>
+              </div>
+
               <div className="space-y-3">
                 {professionals.map(pro => (
-                  <button 
-                    key={pro.id}
-                    onClick={() => { setSelectedPro(pro); setStep(4); }}
-                    className="w-full flex items-center p-4 border rounded-xl hover:shadow-md hover:border-teal-500 transition bg-white"
-                  >
-                    <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-xl mr-4" style={{backgroundColor: pro.color}}>
-                      {pro.name.charAt(0)}
+                  <div key={pro.id} className="border rounded-lg p-4 flex justify-between items-center hover:shadow-md transition bg-white">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 font-bold text-xl">
+                        {pro.name.charAt(0)}
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-800">{pro.name}</p>
+                        <p className="text-sm text-gray-500">Especialista en {selectedService.name}</p>
+                      </div>
                     </div>
-                    <div className="text-left">
-                      <p className="font-bold text-lg text-gray-800">{pro.name}</p>
-                      <p className="text-sm text-gray-500">Especialista CISD</p>
-                    </div>
-                    <div className="ml-auto text-teal-600 font-bold">Seleccionar →</div>
-                  </button>
+                    <button 
+                      onClick={() => { setSelectedPro(pro); setStep(4); }}
+                      className="bg-gray-200 hover:bg-teal-600 hover:text-white text-gray-700 font-bold py-2 px-6 rounded-full text-sm transition"
+                    >
+                      VER HORAS
+                    </button>
+                  </div>
                 ))}
               </div>
-              <button onClick={() => setStep(2)} className="mt-8 text-gray-400 hover:text-gray-600 underline">Volver atrás</button>
+              <button onClick={() => setStep(2)} className="mt-8 text-teal-600 text-sm font-bold">{'< VOLVER AL PASO ANTERIOR'}</button>
             </div>
           )}
 
-          {/* PASO 4: SELECCIÓN HORA */}
+          {/* PASO 4: SELECCIONAR HORA */}
           {step === 4 && (
-            <div className="animate-fade-in-up">
-              <h2 className="text-xl font-bold text-teal-700 mb-6 border-b pb-2">4. Seleccione Día y Hora</h2>
+            <div className="animate-fade-in">
+              <StepHeader num="4" title="Seleccionar día y hora" />
               
               <div className="flex flex-col md:flex-row gap-8">
-                {/* Calendario Simple */}
+                {/* CALENDARIO IZQUIERDA */}
                 <div className="md:w-1/2">
-                  <label className="block font-bold text-gray-700 mb-2">Fecha:</label>
+                  <div className="bg-teal-50 border border-teal-100 rounded-lg p-4 mb-4">
+                    <p className="text-teal-800 font-bold">{selectedPro?.name}</p>
+                    <p className="text-sm text-teal-600">{selectedService?.name}</p>
+                  </div>
+                  <label className="block text-sm font-bold text-gray-600 mb-2">Seleccione Fecha:</label>
                   <input 
                     type="date" 
                     className="w-full p-3 border rounded-lg"
@@ -201,33 +216,24 @@ export default function BookingWizard() {
                     min={new Date().toISOString().split('T')[0]}
                     onChange={(e) => setSelectedDate(e.target.value)}
                   />
-                  
-                  {/* Tarjeta Profesional Resumen */}
-                  <div className="mt-6 p-4 bg-teal-50 rounded-lg border border-teal-100">
-                    <p className="text-xs text-teal-600 uppercase font-bold">Profesional</p>
-                    <p className="font-bold text-lg">{selectedPro.name}</p>
-                    <p className="text-sm text-gray-600 mt-2">{selectedService.name}</p>
-                    <p className="text-sm text-gray-600">{selectedService.durationMin} minutos</p>
-                  </div>
                 </div>
 
-                {/* Lista de Horas */}
+                {/* HORAS DERECHA */}
                 <div className="md:w-1/2">
-                  <label className="block font-bold text-gray-700 mb-2">Horas Disponibles:</label>
+                  <h4 className="font-bold text-gray-700 mb-4 text-center">Horas Disponibles</h4>
                   {loading ? (
-                    <div className="flex justify-center py-10"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600"></div></div>
-                  ) : availableSlots.length === 0 ? (
-                    <div className="text-center py-10 bg-gray-50 rounded-lg border border-dashed">
-                      <p className="text-gray-400">No hay horas para este día.</p>
-                      <p className="text-sm text-gray-400">Intente otra fecha.</p>
+                    <div className="text-center py-10"><div className="inline-block w-8 h-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin"></div></div>
+                  ) : slots.length === 0 ? (
+                    <div className="text-center p-6 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                      <p className="text-gray-500 text-sm">No hay horas disponibles para este día.</p>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-3 gap-2 max-h-[300px] overflow-y-auto">
-                      {availableSlots.map(time => (
+                    <div className="grid grid-cols-2 gap-3">
+                      {slots.map(time => (
                         <button 
                           key={time}
                           onClick={() => { setSelectedTime(time); setStep(5); }}
-                          className="py-2 bg-white border border-teal-200 text-teal-700 rounded hover:bg-teal-600 hover:text-white transition font-bold"
+                          className="py-2 px-4 bg-teal-600 text-white rounded-full font-bold hover:bg-teal-700 hover:shadow-lg transition transform hover:-translate-y-1"
                         >
                           {time}
                         </button>
@@ -236,46 +242,70 @@ export default function BookingWizard() {
                   )}
                 </div>
               </div>
-              <button onClick={() => setStep(3)} className="mt-8 text-gray-400 hover:text-gray-600 underline">Volver atrás</button>
+              <button onClick={() => setStep(3)} className="mt-8 text-teal-600 text-sm font-bold">{'< VOLVER AL PASO ANTERIOR'}</button>
             </div>
           )}
 
           {/* PASO 5: CONFIRMACIÓN */}
           {step === 5 && (
-            <div className="animate-fade-in-up">
-              <h2 className="text-xl font-bold text-teal-700 mb-6 border-b pb-2">5. Confirmar y Reservar</h2>
+            <div className="animate-fade-in">
+              <StepHeader num="5" title="Confirmar y reservar" />
               
-              <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-lg mb-6 flex gap-4 items-center">
-                <div className="text-3xl">📅</div>
-                <div>
-                  <p className="font-bold text-gray-800">Resumen de la Cita</p>
-                  <p className="text-sm text-gray-600">
-                    {new Date(selectedDate).toLocaleDateString()} a las <strong>{selectedTime}</strong>
-                  </p>
-                  <p className="text-sm text-gray-600">{selectedService.name} con {selectedPro.name}</p>
+              <div className="text-center mb-8">
+                <h3 className="text-teal-700 font-bold text-lg">¡Ya casi terminas!</h3>
+                <p className="text-gray-600">Completa tus datos y finaliza la reserva:</p>
+              </div>
+
+              {/* Resumen Card */}
+              <div className="bg-gray-50 border rounded-lg p-4 mb-6 flex items-center justify-center gap-6">
+                <div className="text-center border-r pr-6">
+                  <p className="text-3xl font-bold text-gray-700">{selectedDate.split('-')[2]}</p>
+                  <p className="uppercase text-xs font-bold text-gray-500">MES {selectedDate.split('-')[1]}</p>
+                  <p className="text-teal-600 font-bold text-lg">{selectedTime}</p>
+                </div>
+                <div className="text-sm">
+                  <p><span className="font-bold text-gray-700">Profesional:</span> {selectedPro?.name}</p>
+                  <p><span className="font-bold text-gray-700">Especialidad:</span> {selectedService?.name}</p>
+                  <p><span className="font-bold text-gray-700">Paciente:</span> {patientData.rut}</p>
                 </div>
               </div>
 
-              <h3 className="font-bold text-gray-700 mb-4">Datos de Contacto</h3>
-              <div className="grid md:grid-cols-2 gap-4">
-                <input placeholder="Nombre Completo" className="p-3 border rounded" value={contactInfo.name} onChange={e => setContactInfo({...contactInfo, name: e.target.value})} />
-                <input placeholder="Email" type="email" className="p-3 border rounded" value={contactInfo.email} onChange={e => setContactInfo({...contactInfo, email: e.target.value})} />
-                <input placeholder="Teléfono (+569...)" className="p-3 border rounded md:col-span-2" value={contactInfo.phone} onChange={e => setContactInfo({...contactInfo, phone: e.target.value})} />
+              {/* Formulario Contacto */}
+              <div className="grid md:grid-cols-2 gap-4 max-w-2xl mx-auto">
+                <div>
+                  <label className="text-xs font-bold text-teal-700">Nombre Completo</label>
+                  <input className="w-full p-2 border rounded" value={patientData.name} onChange={e => setPatientData({...patientData, name: e.target.value})} placeholder="Nombre Apellido" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-teal-700">Correo electrónico</label>
+                  <input className="w-full p-2 border rounded" type="email" value={patientData.email} onChange={e => setPatientData({...patientData, email: e.target.value})} placeholder="ejemplo@correo.com" />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs font-bold text-teal-700">Teléfono principal</label>
+                  <div className="flex">
+                    <span className="p-2 bg-gray-100 border border-r-0 rounded-l text-gray-500">🇨🇱 +56</span>
+                    <input className="w-full p-2 border rounded-r" value={patientData.phone} onChange={e => setPatientData({...patientData, phone: e.target.value})} placeholder="9 1234 5678" />
+                  </div>
+                </div>
               </div>
 
-              <div className="mt-4 flex items-start gap-2">
-                <input type="checkbox" className="mt-1" id="terms" />
-                <label htmlFor="terms" className="text-sm text-gray-500">Al reservar la hora reconozco haber leído y acepto los Términos y Condiciones de CISD.</label>
+              <div className="mt-6 flex justify-center">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" className="w-5 h-5 text-teal-600" />
+                  <span className="text-sm text-gray-600">Al reservar reconozco haber leído los <strong>Términos y Condiciones</strong>.</span>
+                </label>
               </div>
 
-              <button 
-                onClick={handleFinalBooking}
-                disabled={loading}
-                className="w-full mt-8 bg-teal-600 text-white py-4 rounded-lg font-bold text-lg hover:bg-teal-700 transition shadow-lg disabled:bg-gray-400"
-              >
-                {loading ? 'RESERVANDO...' : 'CONFIRMAR RESERVA'}
-              </button>
-              <button onClick={() => setStep(4)} className="mt-4 w-full text-center text-gray-400 hover:text-gray-600 underline">Corregir datos</button>
+              <div className="mt-8 flex justify-center gap-4">
+                <button onClick={() => setStep(4)} className="text-teal-600 font-bold text-sm uppercase">Volver</button>
+                <button 
+                  onClick={handleFinalSubmit}
+                  disabled={loading}
+                  className="bg-gray-300 hover:bg-teal-600 text-white font-bold py-3 px-10 rounded-full transition-colors shadow-lg"
+                >
+                  {loading ? 'RESERVANDO...' : 'RESERVAR HORA'}
+                </button>
+              </div>
             </div>
           )}
 

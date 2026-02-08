@@ -12,7 +12,7 @@ import { ProfessionalsView, ServicesView, ScheduleView, PatientsView } from './c
 import BookingWizard from './components/BookingWizard';
 
 function App() {
-  // 1. HOOKS PRIMERO (SIEMPRE ARRIBA)
+  // 1. HOOKS PRIMERO
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [currentHash, setCurrentHash] = useState(window.location.hash);
   
@@ -28,16 +28,13 @@ function App() {
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
 
-  // 2. EFECTOS (Side Effects)
-  
-  // Detectar cambio de URL (Hash)
+  // 2. EFECTOS
   useEffect(() => {
     const handleHashChange = () => setCurrentHash(window.location.hash);
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // Cargar datos administrativos (Solo si hay token y estamos en admin)
   useEffect(() => {
     if (token && currentHash === '#/admin') {
       axios.get('https://cisd-api.onrender.com/api/professionals')
@@ -53,18 +50,17 @@ function App() {
     }
   }, [token, currentHash]);
 
-  // Cargar citas cuando cambia el profesional
   useEffect(() => {
     if (token && currentHash === '#/admin' && profesionalSeleccionado) {
       cargarCitas();
     }
   }, [profesionalSeleccionado, activeView, token, currentHash]);
 
-  // 3. FUNCIONES AUXILIARES
+  // 3. FUNCIONES
   const handleLogout = () => {
     localStorage.removeItem('token');
     setToken(null);
-    window.location.href = '/'; // Redirigir al home
+    window.location.href = '/';
   };
 
   const cargarCitas = () => {
@@ -91,7 +87,6 @@ function App() {
     return prof ? prof.color : '#3788d8';
   }
 
-  // Manejadores de Calendario
   const handleDateClick = (arg) => { setSelectedDate(arg.dateStr); setIsModalOpen(true); }
   const handleEventClick = (info) => { setSelectedEvent(info.event); setIsEventModalOpen(true); }
   const handleEventDrop = async (info) => {
@@ -99,14 +94,14 @@ function App() {
     catch { info.revert(); alert("Error al mover"); }
   };
 
-  // 4. RENDERIZADO CONDICIONAL (AL FINAL)
-
-  // A. MODO PACIENTE (Si la URL no es #/admin)
+  // 4. RENDERIZADO
+  
+  // A. MODO PACIENTE
   if (currentHash !== '#/admin') {
     return <BookingWizard />;
   }
 
-  // B. MODO ADMIN - LOGIN (Si es #/admin pero no hay token)
+  // B. ADMIN - LOGIN
   if (!token) {
     return (
       <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
@@ -116,7 +111,7 @@ function App() {
     );
   }
 
-  // C. MODO ADMIN - DASHBOARD (Si es #/admin y hay token)
+  // C. ADMIN - DASHBOARD
   if (!profesionales) return <div className="h-screen flex items-center justify-center">Cargando sistema...</div>;
 
   return (

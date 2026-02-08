@@ -12,7 +12,7 @@ const port = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'secret_cisd_key_2026';
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Aumentamos límite para subidas masivas
 
 // --- 1. CONFIGURACIÓN DE GOOGLE CALENDAR ---
 const oauth2Client = new google.auth.OAuth2(
@@ -52,7 +52,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// --- 3. GESTIÓN DE PROFESIONALES (CRUD) ---
+// --- 3. GESTIÓN DE PROFESIONALES (CRUD + CSV) ---
 
 // Obtener todos
 app.get('/api/professionals', async (req, res) => {
@@ -60,7 +60,7 @@ app.get('/api/professionals', async (req, res) => {
   res.json(professionals);
 });
 
-// Crear Profesional
+// Crear Uno
 app.post('/api/professionals', async (req, res) => {
   const { name, email, password, color, phone } = req.body;
   try {
@@ -74,7 +74,7 @@ app.post('/api/professionals', async (req, res) => {
   }
 });
 
-// Editar Profesional
+// Editar Uno
 app.put('/api/professionals/:id', async (req, res) => {
   const { id } = req.params;
   const { name, email, color, phone } = req.body;
@@ -89,7 +89,7 @@ app.put('/api/professionals/:id', async (req, res) => {
   }
 });
 
-// Eliminar Profesional
+// Eliminar Uno
 app.delete('/api/professionals/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -100,7 +100,54 @@ app.delete('/api/professionals/:id', async (req, res) => {
   }
 });
 
-// --- 4. GESTIÓN DE SERVICIOS / ESPECIALIDADES (CRUD) ---
+// ** IMPORTAR MASIVO (CSV/JSON) **
+app.post('/api/professionals/import', async (req, res) => {
+  const { data } = req.body; 
+  let successCount = 0;
+  let errors = [];
+
+  if (!data || !Array.isArray(data)) return res.status(400).json({ error: 'Formato inválido' });
+
+  for (const item of data) {
+    try {
+      // Contraseña por defecto si viene vacía en el CSV: 'cisd123'
+      const passwordRaw = item.password && item.password.trim() !== '' ? String(item.password) : 'cisd123';
+      const hashedPassword = await bcrypt.hash(passwordRaw, 10);
+      
+      await prisma.professional.create({
+        data: {
+          name: item.name,
+          email: item.email,
+          password: hashedPassword,
+          phone: item.phone || '',
+          color: item.color || '#3788d8'
+        }
+      });
+      successCount++;
+    } catch (error) {
+      errors.push(`Error con ${item.email}: ${error.code === 'P2002' ? 'Email duplicado' : 'Datos inválidos'}`);
+    }
+  }
+  res.json({ message: `Procesados: ${successCount}. Errores: ${errors.length}`, errors });
+});
+
+// ** EXPORTAR CSV **
+app.get('/api/professionals/export', async (req, res) => {
+  try {
+    const pros = await prisma.professional.findMany();
+    let csv = 'name,email,phone,color\n'; // Cabecera
+    pros.forEach(p => {
+      csv += `"${p.name}","${p.email}","${p.phone || ''}","${p.color}"\n`;
+    });
+    res.header('Content-Type', 'text/csv');
+    res.attachment('profesionales_cisd.csv');
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al exportar' });
+  }
+});
+
+// --- 4. GESTIÓN DE SERVICIOS / ESPECIALIDADES (CRUD + CSV) ---
 
 // Obtener todos
 app.get('/api/services', async (req, res) => {
@@ -108,7 +155,7 @@ app.get('/api/services', async (req, res) => {
   res.json(services);
 });
 
-// Crear Servicio
+// Crear Uno
 app.post('/api/services', async (req, res) => {
   const { name, code, durationMin, price, isTelemed } = req.body;
   try {
@@ -127,7 +174,7 @@ app.post('/api/services', async (req, res) => {
   }
 });
 
-// Editar Servicio
+// Editar Uno
 app.put('/api/services/:id', async (req, res) => {
   const { id } = req.params;
   const { name, durationMin, price, isTelemed } = req.body;
@@ -147,7 +194,7 @@ app.put('/api/services/:id', async (req, res) => {
   }
 });
 
-// Eliminar Servicio
+// Eliminar Uno
 app.delete('/api/services/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -155,6 +202,51 @@ app.delete('/api/services/:id', async (req, res) => {
     res.json({ message: 'Servicio eliminado' });
   } catch (error) {
     res.status(500).json({ error: 'Error al eliminar servicio' });
+  }
+});
+
+// ** IMPORTAR MASIVO (CSV/JSON) **
+app.post('/api/services/import', async (req, res) => {
+  const { data } = req.body;
+  let successCount = 0;
+  let errors = [];
+
+  for (const item of data) {
+    try {
+      // Convertir "true"/"SI" a booleano real
+      const isTelemedVal = String(item.isTelemed).toLowerCase();
+      const booleanTelemed = isTelemedVal === 'true' || isTelemedVal === 'si' || isTelemedVal === '1';
+
+      await prisma.service.create({
+        data: {
+          name: item.name,
+          code: item.code,
+          durationMin: parseInt(item.durationMin) || 30,
+          price: parseInt(item.price) || 0,
+          isTelemed: booleanTelemed
+        }
+      });
+      successCount++;
+    } catch (error) {
+      errors.push(`Error con ${item.code}: ${error.code === 'P2002' ? 'Código duplicado' : 'Datos inválidos'}`);
+    }
+  }
+  res.json({ message: `Procesados: ${successCount}. Errores: ${errors.length}`, errors });
+});
+
+// ** EXPORTAR CSV **
+app.get('/api/services/export', async (req, res) => {
+  try {
+    const services = await prisma.service.findMany();
+    let csv = 'name,code,durationMin,price,isTelemed\n';
+    services.forEach(s => {
+      csv += `"${s.name}","${s.code}",${s.durationMin},${s.price},${s.isTelemed}\n`;
+    });
+    res.header('Content-Type', 'text/csv');
+    res.attachment('especialidades_cisd.csv');
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al exportar' });
   }
 });
 
@@ -176,8 +268,6 @@ app.get('/api/availability/:professionalId', async (req, res) => {
 // Guardar horarios (Sobrescribe los anteriores)
 app.post('/api/availability', async (req, res) => {
   const { professionalId, schedules } = req.body; 
-  // schedules = [{ dayOfWeek: 1, startTime: '09:00', endTime: '13:00' }, ...]
-
   try {
     // 1. Limpiar horario anterior
     await prisma.availability.deleteMany({
@@ -197,7 +287,6 @@ app.post('/api/availability', async (req, res) => {
         })
       ));
     }
-
     res.json({ message: 'Horarios actualizados correctamente' });
   } catch (error) {
     console.error(error);

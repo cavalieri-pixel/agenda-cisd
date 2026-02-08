@@ -1,7 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 
 const API_URL = 'https://cisd-api.onrender.com/api';
+
+// --- UTILIDAD: Convertir CSV a JSON en el navegador ---
+const parseCSV = (text) => {
+  const lines = text.split('\n').filter(l => l.trim() !== '');
+  const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+  const result = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const obj = {};
+    // Separa por comas, pero respeta las comillas si las hay (lógica simple)
+    const currentline = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || lines[i].split(',');
+
+    headers.forEach((header, index) => {
+      let val = currentline[index] ? currentline[index].trim().replace(/"/g, '') : '';
+      obj[header] = val;
+    });
+    result.push(obj);
+  }
+  return result;
+};
 
 // ==========================================
 // MÓDULO 1: PROFESIONALES
@@ -9,6 +29,7 @@ const API_URL = 'https://cisd-api.onrender.com/api';
 export function ProfessionalsView() {
   const [pros, setPros] = useState([]);
   const [form, setForm] = useState({ name: '', email: '', password: '', color: '#3788d8', phone: '' });
+  const fileInputRef = useRef(null); // Referencia invisible para el input de archivo
 
   useEffect(() => { loadPros(); }, []);
   const loadPros = async () => { const res = await axios.get(`${API_URL}/professionals`); setPros(res.data); };
@@ -28,9 +49,52 @@ export function ProfessionalsView() {
     if (window.confirm('¿Borrar?')) { await axios.delete(`${API_URL}/professionals/${id}`); loadPros(); }
   };
 
+  // --- LOGICA CSV ---
+  const handleExport = () => {
+    window.open(`${API_URL}/professionals/export`, '_blank');
+  };
+
+  const handleImportClick = () => fileInputRef.current.click();
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const text = evt.target.result;
+      const json = parseCSV(text);
+      
+      if (json.length === 0) return alert("El archivo parece vacío o incorrecto");
+      
+      try {
+        const res = await axios.post(`${API_URL}/professionals/import`, { data: json });
+        alert(res.data.message);
+        loadPros();
+      } catch (error) {
+        alert("Error al importar datos");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // Limpiar input para permitir subir el mismo archivo de nuevo
+  };
+
   return (
     <div className="p-8">
-      <h2 className="text-2xl font-bold text-slate-800 mb-6 border-b pb-2">Gestión de Profesionales</h2>
+      <div className="flex justify-between items-center mb-6 border-b pb-2">
+        <h2 className="text-2xl font-bold text-slate-800">Gestión de Profesionales</h2>
+        <div className="flex gap-2">
+            <button onClick={handleExport} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm font-bold flex items-center gap-2">
+                ⬇ Descargar CSV
+            </button>
+            <button onClick={handleImportClick} className="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600 text-sm font-bold flex items-center gap-2">
+                ⬆ Cargar CSV
+            </button>
+            {/* Input oculto */}
+            <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".csv" className="hidden" />
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Formulario */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
@@ -73,6 +137,7 @@ export function ProfessionalsView() {
 export function ServicesView() {
   const [services, setServices] = useState([]);
   const [form, setForm] = useState({ name: '', code: '', durationMin: 30, price: 0, isTelemed: false });
+  const fileInputRef = useRef(null);
 
   useEffect(() => { loadServices(); }, []);
   const loadServices = async () => { const res = await axios.get(`${API_URL}/services`); setServices(res.data); };
@@ -89,9 +154,37 @@ export function ServicesView() {
 
   const handleDelete = async (id) => { if (window.confirm('¿Borrar?')) { await axios.delete(`${API_URL}/services/${id}`); loadServices(); }};
 
+  // --- LOGICA CSV ---
+  const handleExport = () => window.open(`${API_URL}/services/export`, '_blank');
+  const handleImportClick = () => fileInputRef.current.click();
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const json = parseCSV(evt.target.result);
+      try {
+        const res = await axios.post(`${API_URL}/services/import`, { data: json });
+        alert(res.data.message);
+        loadServices();
+      } catch (error) { alert("Error al importar"); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   return (
     <div className="p-8">
-      <h2 className="text-2xl font-bold text-slate-800 mb-6 border-b pb-2">Catálogo de Especialidades</h2>
+      <div className="flex justify-between items-center mb-6 border-b pb-2">
+        <h2 className="text-2xl font-bold text-slate-800">Catálogo de Especialidades</h2>
+        <div className="flex gap-2">
+            <button onClick={handleExport} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm font-bold flex items-center gap-2">⬇ CSV</button>
+            <button onClick={handleImportClick} className="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600 text-sm font-bold flex items-center gap-2">⬆ CSV</button>
+            <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".csv" className="hidden" />
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="bg-white p-6 rounded-xl shadow-sm border h-fit">
             <h3 className="font-bold mb-4 text-gray-700">Datos del Servicio</h3>
@@ -104,7 +197,7 @@ export function ServicesView() {
                 </div>
                 <label className="flex items-center gap-2 p-2 border rounded bg-gray-50 cursor-pointer">
                     <input type="checkbox" checked={form.isTelemed} onChange={e => setForm({...form, isTelemed: e.target.checked})} />
-                    <span className="text-sm font-medium">Es Telemedicina (Google Meet)</span>
+                    <span className="text-sm font-medium">Es Telemedicina</span>
                 </label>
                 <button className="w-full bg-indigo-600 text-white p-2 rounded hover:bg-indigo-700 font-bold">Guardar</button>
             </form>
@@ -138,7 +231,7 @@ export function ServicesView() {
 }
 
 // ==========================================
-// MÓDULO 3: HORARIOS
+// MÓDULO 3: HORARIOS (Sin Cambios)
 // ==========================================
 export function ScheduleView() {
     const [pros, setPros] = useState([]);

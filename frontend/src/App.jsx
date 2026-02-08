@@ -7,64 +7,47 @@ import axios from 'axios';
 import AppointmentModal from './components/AppointmentModal';
 import Login from './components/Login';
 import EventModal from './components/EventModal';
-import AdminPanel from './components/AdminPanel'; // <--- IMPORTANTE: El nuevo panel
+import Sidebar from './components/Sidebar'; // <--- Sidebar Nuevo
+import { ProfessionalsView, ServicesView, ScheduleView } from './components/AdminModules'; // <--- Módulos Nuevos
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
   
-  // Estado de datos
+  // NAVEGACIÓN
+  const [activeView, setActiveView] = useState('agenda'); // 'agenda', 'professionals', 'services', 'schedule'
+
+  // ESTADO AGENDA
   const [profesionales, setProfesionales] = useState(null); 
   const [citas, setCitas] = useState([]);
   const [profesionalSeleccionado, setProfesionalSeleccionado] = useState(null);
   
-  // Modales
+  // MODALES AGENDA
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
-  const [isAdminOpen, setIsAdminOpen] = useState(false); // <--- Estado para el Panel Admin
 
-  // --- 1. FUNCIÓN DE SALIDA (LOGOUT) ---
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    window.location.reload(); 
-  };
+  const handleLogout = () => { localStorage.removeItem('token'); window.location.reload(); };
 
-  // --- 2. CARGAR PROFESIONALES (Reutilizable) ---
+  // --- CARGA DE DATOS ---
   const cargarProfesionales = () => {
     axios.get('https://cisd-api.onrender.com/api/professionals')
-      .then((response) => {
-        setProfesionales(response.data);
-        // Si no hay seleccionado, seleccionar el primero
-        if (response.data.length > 0 && !profesionalSeleccionado) {
-          setProfesionalSeleccionado(response.data[0].id);
-        }
+      .then((res) => {
+        setProfesionales(res.data);
+        if (res.data.length > 0 && !profesionalSeleccionado) setProfesionalSeleccionado(res.data[0].id);
       })
-      .catch((error) => {
-        console.error("Error cargando profesionales:", error);
-        if (error.response && error.response.status === 401) {
-          handleLogout();
-        }
-      });
+      .catch((e) => { if (e.response && e.response.status === 401) handleLogout(); });
   };
 
-  useEffect(() => {
-    if (token) {
-      cargarProfesionales();
-    }
-  }, [token]);
+  useEffect(() => { if (token) cargarProfesionales(); }, [token]);
 
-  // --- 3. CARGAR CITAS ---
   const cargarCitas = () => {
     if (profesionalSeleccionado) {
-      const start = '2025-01-01'; 
-      const end = '2026-12-31';
-      
       axios.get('https://cisd-api.onrender.com/api/appointments', {
-        params: { professionalId: profesionalSeleccionado, start, end }
+        params: { professionalId: profesionalSeleccionado, start: '2025-01-01', end: '2026-12-31' }
       })
-      .then((response) => {
-        const eventosFormateados = response.data.map(cita => ({
+      .then((res) => {
+        const eventos = res.data.map(cita => ({
           id: cita.id,
           title: cita.service ? `${cita.patient.name} - ${cita.service.name}` : 'Bloqueado',
           start: cita.startTime,
@@ -73,15 +56,12 @@ function App() {
           borderColor: obtenerColorProfesional(profesionalSeleccionado),
           extendedProps: { ...cita } 
         }));
-        setCitas(eventosFormateados);
-      })
-      .catch(error => console.error("Error cargando citas:", error));
+        setCitas(eventos);
+      });
     }
   };
 
-  useEffect(() => {
-    cargarCitas();
-  }, [profesionalSeleccionado]);
+  useEffect(() => { cargarCitas(); }, [profesionalSeleccionado, activeView]); // Recargar al volver a agenda
 
   const obtenerColorProfesional = (id) => {
     if (!profesionales) return '#3788d8';
@@ -89,144 +69,81 @@ function App() {
     return prof ? prof.color : '#3788d8';
   }
 
-  // --- MANEJADORES ---
-
-  const handleDateClick = (arg) => {
-    setSelectedDate(arg.dateStr);
-    setIsModalOpen(true);
-  }
-
-  const handleEventClick = (clickInfo) => {
-    setSelectedEvent(clickInfo.event);
-    setIsEventModalOpen(true);
-  }
-
-  const handleEventDrop = async (dropInfo) => {
-    const citaId = dropInfo.event.id;
-    const newStart = dropInfo.event.start;
-
-    try {
-      await axios.put(`https://cisd-api.onrender.com/api/appointments/${citaId}`, {
-        newStartTime: newStart
-      });
-      console.log("Cita movida exitosamente");
-    } catch (error) {
-      console.error("Error al mover la cita", error);
-      alert("No se pudo mover la cita. Volviendo a posición original.");
-      dropInfo.revert(); 
-    }
+  // --- MANEJADORES AGENDA ---
+  const handleDateClick = (arg) => { setSelectedDate(arg.dateStr); setIsModalOpen(true); }
+  const handleEventClick = (info) => { setSelectedEvent(info.event); setIsEventModalOpen(true); }
+  const handleEventDrop = async (info) => {
+    try { await axios.put(`https://cisd-api.onrender.com/api/appointments/${info.event.id}`, { newStartTime: info.event.start }); }
+    catch { info.revert(); alert("Error al mover"); }
   };
 
-  // --- RENDER ---
-
+  // --- RENDERIZADO PRINCIPAL ---
   if (!token) return <Login onLogin={setToken} />;
-
-  if (!profesionales) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600 font-medium">Conectando con CISD...</p>
-        </div>
-      </div>
-    );
-  }
+  if (!profesionales) return <div className="h-screen flex items-center justify-center">Cargando...</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6 font-sans">
+    <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
       
-      {/* BARRA SUPERIOR */}
-      <div className="bg-white p-4 rounded-lg shadow mb-6 flex flex-col sm:flex-row justify-between items-center border-l-4 border-blue-600 gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Agenda CISD</h1>
-          <p className="text-sm text-gray-500">Sistema Seguro</p>
-        </div>
+      {/* 1. SIDEBAR IZQUIERDO */}
+      <Sidebar activeView={activeView} setActiveView={setActiveView} onLogout={handleLogout} />
+
+      {/* 2. ÁREA DE CONTENIDO PRINCIPAL */}
+      <main className="flex-1 overflow-y-auto relative">
         
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-gray-700 hidden sm:inline">Ver agenda de:</span>
-            <select 
-              className="p-2 border border-gray-300 rounded shadow-sm focus:ring-2 focus:ring-blue-500 outline-none text-sm"
-              value={profesionalSeleccionado || ''}
-              onChange={(e) => setProfesionalSeleccionado(e.target.value)}
-            >
-              {profesionales.map(prof => (
-                <option key={prof.id} value={prof.id}>
-                  {prof.name}
-                </option>
-              ))}
-            </select>
+        {/* VISTA: AGENDA */}
+        {activeView === 'agenda' && (
+          <div className="p-6">
+            {/* Barra superior de la agenda */}
+            <div className="bg-white p-4 rounded-xl shadow-sm mb-6 flex justify-between items-center border border-gray-100">
+               <div>
+                 <h2 className="text-2xl font-bold text-gray-800">Agenda Médica</h2>
+                 <p className="text-gray-500 text-sm">Vista semanal</p>
+               </div>
+               <div className="flex items-center gap-3 bg-gray-50 px-4 py-2 rounded-lg border">
+                 <span className="text-sm font-bold text-gray-600">Ver Agenda de:</span>
+                 <select 
+                   className="bg-transparent font-medium text-blue-700 outline-none"
+                   value={profesionalSeleccionado || ''}
+                   onChange={(e) => setProfesionalSeleccionado(e.target.value)}
+                 >
+                   {profesionales.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                 </select>
+               </div>
+            </div>
+
+            {/* Calendario */}
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+              <FullCalendar
+                plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+                initialView="timeGridWeek"
+                headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' }}
+                locale="es"
+                slotMinTime="08:00:00"
+                slotMaxTime="20:00:00"
+                slotDuration="00:30:00"
+                allDaySlot={false}
+                height="auto"
+                events={citas}
+                editable={true} 
+                eventDrop={handleEventDrop} 
+                dateClick={handleDateClick}
+                eventClick={handleEventClick}
+                nowIndicator={true}
+              />
+            </div>
+            
+            {/* Modales de la Agenda */}
+            <AppointmentModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} professionalId={profesionalSeleccionado} startTime={selectedDate} onSuccess={cargarCitas} />
+            <EventModal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} event={selectedEvent} onDeleteSuccess={cargarCitas} />
           </div>
+        )}
 
-          {/* Botón CONFIGURACIÓN (NUEVO) */}
-          <button 
-            onClick={() => setIsAdminOpen(true)}
-            className="flex items-center gap-1 text-sm bg-gray-100 text-gray-700 font-medium border border-gray-300 px-3 py-2 rounded hover:bg-gray-200 transition-colors"
-          >
-            ⚙️ <span className="hidden sm:inline">Configuración</span>
-          </button>
+        {/* VISTAS: MÓDULOS DE ADMINISTRACIÓN */}
+        {activeView === 'professionals' && <ProfessionalsView />}
+        {activeView === 'services' && <ServicesView />}
+        {activeView === 'schedule' && <ScheduleView />}
 
-          <button 
-            onClick={handleLogout}
-            className="text-sm text-red-600 hover:text-red-800 font-medium border border-red-200 px-3 py-2 rounded hover:bg-red-50 transition-colors"
-          >
-            Salir
-          </button>
-        </div>
-      </div>
-
-      {/* CALENDARIO */}
-      <div className="bg-white p-6 rounded-lg shadow-lg">
-        <FullCalendar
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek"
-          headerToolbar={{
-            left: 'prev,next today',
-            center: 'title',
-            right: 'dayGridMonth,timeGridWeek,timeGridDay'
-          }}
-          locale="es"
-          slotMinTime="08:00:00"
-          slotMaxTime="20:00:00"
-          slotDuration="00:30:00"
-          allDaySlot={false}
-          height="auto"
-          events={citas}
-          editable={true} 
-          eventDrop={handleEventDrop} 
-          dateClick={handleDateClick}
-          eventClick={handleEventClick}
-          nowIndicator={true}
-        />
-      </div>
-
-      {/* MODALES */}
-      <AppointmentModal 
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        professionalId={profesionalSeleccionado}
-        startTime={selectedDate}
-        onSuccess={cargarCitas} 
-      />
-
-      <EventModal 
-        isOpen={isEventModalOpen}
-        onClose={() => setIsEventModalOpen(false)}
-        event={selectedEvent}
-        onDeleteSuccess={cargarCitas}
-      />
-
-      {/* PANEL DE ADMINISTRACIÓN (NUEVO) */}
-      <AdminPanel 
-        isOpen={isAdminOpen} 
-        onClose={() => {
-          setIsAdminOpen(false);
-          // Recargamos datos por si se agregó un médico o cambiaron colores
-          cargarProfesionales();
-          cargarCitas();
-        }} 
-      />
-
+      </main>
     </div>
   );
 }

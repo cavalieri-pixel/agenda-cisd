@@ -24,7 +24,7 @@ model Service {
   name         String
   code         String        @unique
   durationMin  Int
-  price        Int           // Precio base del servicio
+  price        Int
   isTelemed    Boolean       @default(false)
   appointments Appointment[]
 }
@@ -35,6 +35,13 @@ model Patient {
   name         String
   email        String
   phone        String?
+  
+  // --- NUEVOS DATOS PACIENTE ---
+  address      String?
+  prevision    String?       // Ej: Fonasa, Isapre, Particular
+  birthDate    DateTime?
+  // ---------------------------
+
   appointments Appointment[]
 }
 
@@ -44,17 +51,15 @@ model Appointment {
   endTime        DateTime
   status         String       @default("CONFIRMED")
   
-  // --- CAMPOS FINANCIEROS (MERCADOPAGO) ---
-  price          Int          @default(0)           // Precio congelado al momento de la reserva
-  paymentStatus  String       @default("PENDING")   // PENDING, PAID, REJECTED
-  paymentMethod  String?                            // Ej: "MERCADOPAGO", "TRANSFERENCIA", "EFECTIVO"
-  mpPreferenceId String?                            // ID de la intención de pago (para el link)
-  mpPaymentId    String?                            // ID del comprobante final de MP
-  // ----------------------------------------
+  // Financiero
+  price          Int          @default(0)
+  paymentStatus  String       @default("PENDING")
+  paymentMethod  String?      
+  mpPreferenceId String?      
+  mpPaymentId    String?      
 
-  // --- FICHA CLÍNICA ---
+  // Clínico
   clinicalNote   String?      @db.Text
-  // ---------------------
 
   professionalId Int
   professional   Professional @relation(fields: [professionalId], references: [id])

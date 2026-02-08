@@ -1,5 +1,3 @@
-// schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,26 +8,23 @@ datasource db {
 }
 
 model Professional {
-  id           Int            @id @default(autoincrement())
-  name         String
-  email        String         @unique
-  password     String
-  color        String         @default("#3788d8") // Para el calendario
-  phone        String?
-  appointments Appointment[]
-  
-  // Relación con Horarios Disponibles (NUEVO)
-  availabilities Availability[] 
-  
-  createdAt    DateTime       @default(now())
+  id             Int            @id @default(autoincrement())
+  name           String
+  email          String         @unique
+  password       String
+  color          String         @default("#3788d8")
+  phone          String?
+  appointments   Appointment[]
+  availabilities Availability[]
+  createdAt      DateTime       @default(now())
 }
 
 model Service {
   id           Int           @id @default(autoincrement())
   name         String
-  code         String        @unique // Ejemplo: "KINE-RESP"
-  durationMin  Int           // Duración en minutos
-  price        Int           // Precio en CLP
+  code         String        @unique
+  durationMin  Int
+  price        Int
   isTelemed    Boolean       @default(false)
   appointments Appointment[]
 }
@@ -47,7 +42,7 @@ model Appointment {
   id             Int          @id @default(autoincrement())
   startTime      DateTime
   endTime        DateTime
-  status         String       @default("CONFIRMED") // CONFIRMED, CANCELLED, COMPLETED
+  status         String       @default("CONFIRMED")
   
   professionalId Int
   professional   Professional @relation(fields: [professionalId], references: [id])
@@ -58,19 +53,21 @@ model Appointment {
   serviceId      Int
   service        Service      @relation(fields: [serviceId], references: [id])
 
-  meetLink       String?      // Link de Google Meet
-  googleEventId  String?      // ID del evento en Google Calendar
+  meetLink       String?
+  googleEventId  String?
+
+  // --- NUEVO CAMPO: NOTA CLÍNICA ---
+  clinicalNote   String?      @db.Text
+  // ---------------------------------
 
   createdAt      DateTime     @default(now())
 }
 
-// --- NUEVO MODELO: DISPONIBILIDAD ---
-// Define qué días y horas trabaja un profesional
 model Availability {
   id             Int          @id @default(autoincrement())
-  dayOfWeek      Int          // 0=Domingo, 1=Lunes, ... 6=Sábado
-  startTime      String       // Ejemplo: "09:00"
-  endTime        String       // Ejemplo: "13:00"
+  dayOfWeek      Int
+  startTime      String
+  endTime        String
   
   professionalId Int
   professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)

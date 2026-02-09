@@ -3,8 +3,30 @@ import axios from 'axios';
 
 const API_URL = 'https://cisd-api.onrender.com/api';
 
+// --- UTILIDAD: Formatear RUT automáticamente ---
+const formatRut = (rut) => {
+  // 1. Limpiar: dejar solo números y k
+  const clean = rut.replace(/[^0-9kK]/g, "");
+  // 2. Si es muy corto, devolver limpio
+  if (clean.length <= 1) return clean;
+  // 3. Separar cuerpo y dígito verificador
+  const body = clean.slice(0, -1);
+  const dv = clean.slice(-1).toUpperCase();
+  // 4. Formatear con puntos
+  return body.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + "-" + dv;
+};
+
+// --- UTILIDAD: Formatear Fecha para Input (YYYY-MM-DDTHH:mm) ---
+const toInputDate = (dateObj) => {
+  if (!dateObj) return '';
+  // Truco para ajustar a hora local sin líos de zona horaria
+  const offset = dateObj.getTimezoneOffset() * 60000;
+  const localDate = new Date(dateObj.getTime() - offset);
+  return localDate.toISOString().slice(0, 16);
+};
+
 export default function AppointmentModal({ isOpen, onClose, professionalId, startTime, onSuccess }) {
-  const [activeTab, setActiveTab] = useState('patient'); // 'patient' o 'block'
+  const [activeTab, setActiveTab] = useState('patient'); 
   
   // ESTADOS PACIENTE
   const [services, setServices] = useState([]);
@@ -14,29 +36,45 @@ export default function AppointmentModal({ isOpen, onClose, professionalId, star
   
   // ESTADOS BLOQUEO
   const [blockTitle, setBlockTitle] = useState('Bloqueo Administrativo');
+  const [blockStartTime, setBlockStartTime] = useState(''); // Nuevo: Inicio editable
   const [blockEndTime, setBlockEndTime] = useState('');
 
   useEffect(() => {
     if (isOpen) {
+      // 1. Cargar Servicios
       axios.get(`${API_URL}/services`).then(res => {
         setServices(res.data);
         if (res.data.length > 0) setServiceCode(res.data[0].code);
       });
-      // Calcular hora fin por defecto (1 hora después) para bloqueo
+
+      // 2. Configurar Horas Iniciales (Inicio y Fin)
       if (startTime) {
-        const d = new Date(startTime);
-        d.setHours(d.getHours() + 1);
-        const iso = d.toLocaleString('sv').replace(' ', 'T').slice(0,16); 
-        setBlockEndTime(iso);
+        const startObj = new Date(startTime);
+        const endObj = new Date(startTime);
+        endObj.setHours(endObj.getHours() + 1); // Por defecto 1 hora después
+
+        setBlockStartTime(toInputDate(startObj));
+        setBlockEndTime(toInputDate(endObj));
       }
     }
   }, [isOpen, startTime]);
 
+  // Manejador inteligente de RUT
+  const handleRutChange = (e) => {
+    const raw = e.target.value;
+    const formatted = formatRut(raw);
+    setRut(formatted);
+  };
+
   const handleSearch = async () => {
+    if (rut.length < 8) return alert("Ingrese un RUT válido");
     try {
       const res = await axios.get(`${API_URL}/patients/search/${rut}`);
       setPatientData(res.data);
-    } catch { alert('Paciente no encontrado (se creará uno nuevo)'); }
+    } catch { 
+      alert('Paciente no encontrado (se creará uno nuevo al agendar)'); 
+      // No limpiamos los datos para permitir que los llenen manual
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -48,15 +86,20 @@ export default function AppointmentModal({ isOpen, onClose, professionalId, star
           type: 'APPOINTMENT',
           professionalId,
           serviceCode,
-          startTime,
+          startTime, // Para paciente mantenemos la hora del click original (o podrías hacerla editable también)
           rut, ...patientData
         });
       } else {
         // CREAR BLOQUEO
+        // Validamos que el fin sea después del inicio
+        if (new Date(blockEndTime) <= new Date(blockStartTime)) {
+          return alert("La hora de término debe ser posterior al inicio.");
+        }
+
         await axios.post(`${API_URL}/appointments`, {
           type: 'BLOCK',
           professionalId,
-          startTime,
+          startTime: new Date(blockStartTime), // Usamos la hora editable
           endTime: new Date(blockEndTime),
           title: blockTitle
         });
@@ -88,8 +131,15 @@ export default function AppointmentModal({ isOpen, onClose, professionalId, star
               <div>
                 <label className="text-xs font-bold text-gray-500">RUT Paciente</label>
                 <div className="flex gap-2">
-                  <input className="border p-2 rounded w-full" value={rut} onChange={e => setRut(e.target.value)} placeholder="12.345.678-9" required />
-                  <button type="button" onClick={handleSearch} className="bg-blue-100 text-blue-600 px-3 rounded">🔍</button>
+                  <input 
+                    className="border p-2 rounded w-full font-mono" 
+                    value={rut} 
+                    onChange={handleRutChange} // Usamos el nuevo manejador
+                    placeholder="12.345.678-9" 
+                    maxLength={12}
+                    required 
+                  />
+                  <button type="button" onClick={handleSearch} className="bg-blue-100 text-blue-600 px-3 rounded hover:bg-blue-200">🔍</button>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -110,24 +160,46 @@ export default function AppointmentModal({ isOpen, onClose, professionalId, star
           {/* MODO BLOQUEO */}
           {activeTab === 'block' && (
             <div className="space-y-4 bg-red-50 p-4 rounded-lg border border-red-100">
-              <p className="text-sm text-red-800">Esta acción impedirá que los pacientes reserven en este rango de horario.</p>
+              <p className="text-sm text-red-800">Esta acción impedirá que los pacientes reserven en este rango.</p>
+              
               <div>
                 <label className="text-xs font-bold text-gray-600">Motivo del Bloqueo</label>
-                <input className="border p-2 rounded w-full" value={blockTitle} onChange={e => setBlockTitle(e.target.value)} placeholder="Ej: Almuerzo, Congreso, Vacaciones" />
+                <input 
+                  className="border p-2 rounded w-full" 
+                  value={blockTitle} 
+                  onChange={e => setBlockTitle(e.target.value)} 
+                  placeholder="Ej: Almuerzo, Congreso..." 
+                />
               </div>
-              <div>
-                <label className="text-xs font-bold text-gray-600">Bloquear Desde</label>
-                <input disabled className="border p-2 rounded w-full bg-gray-100 text-gray-500" value={new Date(startTime).toLocaleString()} />
-              </div>
-              <div>
-                <label className="text-xs font-bold text-gray-600">Bloquear Hasta</label>
-                <input type="datetime-local" className="border p-2 rounded w-full" value={blockEndTime} onChange={e => setBlockEndTime(e.target.value)} required />
+
+              {/* AHORA SON EDITABLES AMBOS CAMPOS */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-gray-600">Bloquear Desde</label>
+                  <input 
+                    type="datetime-local" 
+                    className="border p-2 rounded w-full bg-white" 
+                    value={blockStartTime} 
+                    onChange={e => setBlockStartTime(e.target.value)} 
+                    required 
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-600">Bloquear Hasta</label>
+                  <input 
+                    type="datetime-local" 
+                    className="border p-2 rounded w-full bg-white" 
+                    value={blockEndTime} 
+                    onChange={e => setBlockEndTime(e.target.value)} 
+                    required 
+                  />
+                </div>
               </div>
             </div>
           )}
 
           <div className="flex gap-2 mt-6">
-            <button type="button" onClick={onClose} className="flex-1 py-2 border rounded text-gray-600">Cancelar</button>
+            <button type="button" onClick={onClose} className="flex-1 py-2 border rounded text-gray-600 hover:bg-gray-50">Cancelar</button>
             <button type="submit" className={`flex-1 py-2 text-white rounded font-bold ${activeTab === 'patient' ? 'bg-teal-600 hover:bg-teal-700' : 'bg-red-500 hover:bg-red-600'}`}>{activeTab === 'patient' ? 'Agendar Cita' : 'Confirmar Bloqueo'}</button>
           </div>
         </form>

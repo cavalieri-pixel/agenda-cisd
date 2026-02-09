@@ -1,5 +1,3 @@
-// ACTUALIZACION VISTA HORARIOS
-
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
@@ -214,11 +212,11 @@ export function PatientsView() {
 // =========================================================
 export function ProfessionalsView() {
   const [profs, setProfs] = useState([]);
-  const [form, setForm] = useState({ name: '', email: '', password: '', color: '#3788d8', phone: '' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', color: '#3788d8', phone: '', slotInterval: 30 });
 
   useEffect(() => { load(); }, []);
   const load = () => axios.get(`${API_URL}/professionals`).then(r => setProfs(r.data));
-  const save = async () => { await axios.post(`${API_URL}/professionals`, form); load(); setForm({name:'',email:'',password:'',color:'#3788d8',phone:''}); };
+  const save = async () => { await axios.post(`${API_URL}/professionals`, form); load(); setForm({name:'',email:'',password:'',color:'#3788d8',phone:'', slotInterval:30}); };
   const del = async (id) => { if(confirm('¿Borrar?')) { await axios.delete(`${API_URL}/professionals/${id}`); load(); } };
 
   const handleExport = () => axios.get(`${API_URL}/professionals/export`).then(res => downloadCSV(res.data, 'profesionales.csv'));
@@ -242,13 +240,14 @@ export function ProfessionalsView() {
         <input placeholder="Nombre" className="border p-2 rounded" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} />
         <input placeholder="Email" className="border p-2 rounded" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} />
         <input placeholder="Pass" type="password" className="border p-2 rounded" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} />
+        <input placeholder="Intervalo" type="number" className="border p-2 rounded w-20" value={form.slotInterval} onChange={e=>setForm({...form,slotInterval:e.target.value})} />
         <input type="color" className="h-10 w-10" value={form.color} onChange={e=>setForm({...form,color:e.target.value})} />
         <button onClick={save} className="bg-blue-600 text-white px-4 rounded">Crear</button>
       </div>
       <div className="grid gap-2">
         {profs.map(p => (
           <div key={p.id} className="bg-white p-4 rounded shadow flex justify-between">
-            <div className="flex items-center gap-3"><div className="w-4 h-4 rounded-full" style={{background:p.color}}></div><span>{p.name} ({p.email})</span></div>
+            <div className="flex items-center gap-3"><div className="w-4 h-4 rounded-full" style={{background:p.color}}></div><span>{p.name} (Int: {p.slotInterval}m)</span></div>
             <button onClick={() => del(p.id)} className="text-red-500">Eliminar</button>
           </div>
         ))}
@@ -258,28 +257,38 @@ export function ProfessionalsView() {
 }
 
 // =========================================================
-// 4. VISTA DE HORARIOS (DISEÑO MEJORADO EN COLUMNAS)
+// 4. VISTA DE HORARIOS (CONFIGURACIÓN AVANZADA)
 // =========================================================
 export function ScheduleView() {
   const [profs, setProfs] = useState([]);
   const [selectedPro, setSelectedPro] = useState(null);
   const [schedules, setSchedules] = useState([]);
+  const [slotInterval, setSlotInterval] = useState(30);
   
   const DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 
   useEffect(() => {
     axios.get(`${API_URL}/professionals`).then(r => {
       setProfs(r.data);
-      if (r.data.length > 0) setSelectedPro(r.data[0].id);
+      if (r.data.length > 0) {
+        setSelectedPro(r.data[0].id);
+        setSlotInterval(r.data[0].slotInterval || 30);
+      }
     });
   }, []);
 
-  useEffect(() => { if (selectedPro) loadSchedule(); }, [selectedPro]);
+  useEffect(() => { 
+    if (selectedPro) {
+      loadSchedule();
+      const currentPro = profs.find(p => p.id === parseInt(selectedPro));
+      if (currentPro) setSlotInterval(currentPro.slotInterval || 30);
+    }
+  }, [selectedPro]);
 
   const loadSchedule = () => { axios.get(`${API_URL}/availability/${selectedPro}`).then(r => setSchedules(r.data)); };
 
   const addSlot = (dayIndex) => {
-    const newSlot = { dayOfWeek: dayIndex, startTime: '09:00', endTime: '18:00', professionalId: parseInt(selectedPro) };
+    const newSlot = { dayOfWeek: dayIndex, startTime: '09:00', endTime: '13:00', professionalId: parseInt(selectedPro) };
     setSchedules([...schedules, newSlot]);
   };
 
@@ -296,52 +305,52 @@ export function ScheduleView() {
   };
 
   const save = async () => {
-    await axios.post(`${API_URL}/availability`, { professionalId: selectedPro, schedules });
-    alert('Horario guardado correctamente');
+    try {
+      await axios.post(`${API_URL}/availability`, { professionalId: selectedPro, schedules });
+      const currentPro = profs.find(p => p.id === parseInt(selectedPro));
+      await axios.put(`${API_URL}/professionals/${selectedPro}`, { ...currentPro, slotInterval: parseInt(slotInterval) });
+      alert('✅ Configuración guardada con éxito');
+    } catch (error) { alert('Error al guardar'); }
   };
 
   return (
     <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-800">Configurar Horarios</h2>
-        <div className="flex items-center gap-3">
-          <label className="font-bold text-gray-600">Profesional:</label>
-          <select className="p-2 border rounded-lg bg-white shadow-sm" value={selectedPro || ''} onChange={e => setSelectedPro(e.target.value)}>
-            {profs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <div><h2 className="text-2xl font-bold text-gray-800">Configurar Horarios</h2><p className="text-sm text-gray-500">Define turnos y pausas.</p></div>
+        <div className="flex flex-col md:flex-row gap-4 bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex items-center gap-2">
+            <label className="font-bold text-gray-600 text-sm">Profesional:</label>
+            <select className="p-2 border rounded-lg bg-gray-50 font-bold text-teal-700 outline-none" value={selectedPro || ''} onChange={e => setSelectedPro(e.target.value)}>{profs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+          </div>
+          <div className="flex items-center gap-2 border-l pl-4">
+            <label className="font-bold text-gray-600 text-sm">Intervalo (min):</label>
+            <input type="number" className="p-2 border rounded-lg w-20 text-center font-bold bg-gray-50" value={slotInterval} onChange={e => setSlotInterval(e.target.value)} min="5" max="60" step="5" />
+          </div>
         </div>
+      </div>
+
+      <div className="bg-blue-50 p-4 rounded-lg mb-6 border border-blue-100 flex items-start gap-3">
+        <span className="text-2xl">💡</span>
+        <div><p className="font-bold text-blue-800 text-sm">¿Cómo bloquear horarios de almuerzo?</p><p className="text-sm text-blue-600">Crea <strong>dos bloques</strong> separados. Ej: [09:00 - 13:00] y [14:00 - 18:00].</p></div>
       </div>
 
       <div className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden divide-y divide-gray-100">
         {DAYS.map((day, idx) => {
           const daySlots = schedules.map((s, i) => ({ ...s, originalIndex: i })).filter(s => s.dayOfWeek === idx);
-          
           return (
             <div key={idx} className="p-6 grid grid-cols-1 md:grid-cols-4 gap-6 hover:bg-gray-50 transition">
-              {/* Columna 1: Día y Botón Agregar */}
               <div className="md:col-span-1 flex flex-col justify-center border-r border-transparent md:border-gray-100 pr-4">
                 <h3 className="text-lg font-bold text-teal-800 mb-1">{day}</h3>
-                <button onClick={() => addSlot(idx)} className="text-sm text-blue-600 font-bold hover:underline text-left">+ Agregar bloque</button>
+                <button onClick={() => addSlot(idx)} className="text-sm text-white bg-teal-500 px-3 py-1 rounded hover:bg-teal-600 font-bold shadow-sm w-max transition">+ Agregar Turno</button>
               </div>
-
-              {/* Columna 2: Bloques de Tiempo */}
               <div className="md:col-span-3 space-y-3">
-                {daySlots.length === 0 && <p className="text-gray-400 italic py-2">No atiende este día</p>}
-                
+                {daySlots.length === 0 && <p className="text-gray-400 italic py-4">No atiende este día (Día Libre)</p>}
                 {daySlots.map((slot) => (
-                  <div key={slot.originalIndex} className="flex items-center gap-3 bg-gray-50 p-2 rounded-lg border border-gray-200 w-full max-w-md">
-                    <div className="flex items-center gap-2 flex-1">
-                      <span className="text-xs font-bold text-gray-500 uppercase">Inicio</span>
-                      <input type="time" className="border rounded p-1 text-sm flex-1" value={slot.startTime} onChange={e => updateSlot(slot.originalIndex, 'startTime', e.target.value)} />
-                    </div>
-                    <span className="text-gray-400 font-bold">→</span>
-                    <div className="flex items-center gap-2 flex-1">
-                      <span className="text-xs font-bold text-gray-500 uppercase">Fin</span>
-                      <input type="time" className="border rounded p-1 text-sm flex-1" value={slot.endTime} onChange={e => updateSlot(slot.originalIndex, 'endTime', e.target.value)} />
-                    </div>
-                    <button onClick={() => removeSlot(slot.originalIndex)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition">
-                      ✕
-                    </button>
+                  <div key={slot.originalIndex} className="flex items-center gap-3 bg-white p-3 rounded-lg border border-gray-200 shadow-sm w-full max-w-lg group">
+                    <div className="flex items-center gap-2 flex-1"><span className="text-xs font-bold text-gray-400 uppercase">Inicio</span><input type="time" className="border rounded p-1 text-lg font-bold text-gray-700 flex-1 focus:ring-2 focus:ring-teal-200 outline-none" value={slot.startTime} onChange={e => updateSlot(slot.originalIndex, 'startTime', e.target.value)} /></div>
+                    <span className="text-gray-300 font-bold">➝</span>
+                    <div className="flex items-center gap-2 flex-1"><span className="text-xs font-bold text-gray-400 uppercase">Fin</span><input type="time" className="border rounded p-1 text-lg font-bold text-gray-700 flex-1 focus:ring-2 focus:ring-teal-200 outline-none" value={slot.endTime} onChange={e => updateSlot(slot.originalIndex, 'endTime', e.target.value)} /></div>
+                    <button onClick={() => removeSlot(slot.originalIndex)} className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition" title="Eliminar Bloque">✕</button>
                   </div>
                 ))}
               </div>
@@ -350,10 +359,8 @@ export function ScheduleView() {
         })}
       </div>
 
-      <div className="mt-8 flex justify-end sticky bottom-6">
-        <button onClick={save} className="bg-teal-600 text-white px-8 py-3 rounded-xl font-bold shadow-lg hover:bg-teal-700 transition transform hover:scale-105">
-          💾 Guardar Cambios
-        </button>
+      <div className="mt-8 flex justify-end sticky bottom-6 z-10">
+        <button onClick={save} className="bg-teal-600 text-white px-8 py-4 rounded-xl font-bold shadow-xl hover:bg-teal-700 transition transform hover:scale-105 flex items-center gap-2"><span>💾</span> Guardar Configuración</button>
       </div>
     </div>
   );

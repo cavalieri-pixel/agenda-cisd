@@ -14,6 +14,10 @@ model Professional {
   password       String
   color          String         @default("#3788d8")
   phone          String?
+  
+  // Intervalo entre citas (minutos)
+  slotInterval   Int            @default(30) 
+
   appointments   Appointment[]
   availabilities Availability[]
   createdAt      DateTime       @default(now())

@@ -3,6 +3,18 @@ import axios from 'axios';
 
 const API_URL = 'https://cisd-api.onrender.com/api';
 
+// --- LISTA DE COMUNAS SANTIAGO ---
+const COMUNAS_SANTIAGO = [
+  "Cerrillos", "Cerro Navia", "Conchalí", "El Bosque", "Estación Central",
+  "Huechuraba", "Independencia", "La Cisterna", "La Florida", "La Granja",
+  "La Pintana", "La Reina", "Las Condes", "Lo Barnechea", "Lo Espejo",
+  "Lo Prado", "Macul", "Maipú", "Ñuñoa", "Pedro Aguirre Cerda",
+  "Peñalolén", "Providencia", "Pudahuel", "Quilicura", "Quinta Normal",
+  "Recoleta", "Renca", "San Joaquín", "San Miguel", "San Ramón",
+  "Santiago", "Vitacura", "Puente Alto", "San Bernardo", "Colina", "Lampa", 
+  "Otro"
+].sort();
+
 // --- UTILIDADES ---
 const formatRut = (rut) => { 
   const clean = rut.replace(/[^0-9kK]/g, ""); 
@@ -36,7 +48,7 @@ export default function BookingWizard() {
   const [professionals, setProfessionals] = useState([]);
   const [proSlots, setProSlots] = useState({});
 
-  // DATOS FORMULARIO (Agregada 'commune')
+  // DATOS FORMULARIO
   const [rut, setRut] = useState('');
   const [patientData, setPatientData] = useState({ 
     name: '', 
@@ -92,23 +104,30 @@ export default function BookingWizard() {
           surname: res.data.name.split(' ').slice(1).join(' '), 
           name: res.data.name.split(' ')[0], 
           birthDate: res.data.birthDate ? res.data.birthDate.split('T')[0] : '',
-          // Si ya existe la dirección combinada, intentamos separar comuna (opcional visualmente)
-          commune: '' // Dejamos vacía por seguridad si viene combinada
+          commune: '' 
         }); 
         setStep(3); 
       } 
     } catch { 
-      setStep(2); // Nuevo paciente
+      setStep(2); 
     } finally { 
       setLoading(false); 
     }
+  };
+
+  // VALIDACIÓN DEL PASO 2
+  const handleSavePatientForm = () => {
+    const { name, surname, email, phone, address, commune } = patientData;
+    if (!name || !surname || !email || !phone || !address || !commune) {
+      return alert("Por favor complete todos los campos obligatorios.");
+    }
+    setStep(3);
   };
 
   const handleBack = () => {
     if (step > 1) setStep(step - 1);
   };
 
-  // Cargar horas
   useEffect(() => { 
     if (step === 6 && selectedService) loadAllSlots(selectedDate); 
   }, [step, selectedDate, selectedService]);
@@ -133,7 +152,7 @@ export default function BookingWizard() {
 
   const handleFinalBooking = async () => {
     setLoading(true);
-    // Combinamos Dirección y Comuna para guardarlo en el campo 'address' de la DB
+    // Combinar Dirección y Comuna
     const finalAddress = patientData.commune 
       ? `${patientData.address}, ${patientData.commune}`
       : patientData.address;
@@ -191,7 +210,7 @@ export default function BookingWizard() {
             </div>
           )}
 
-          {/* PASO 2: DATOS NUEVO PACIENTE (FORMULARIO ACTUALIZADO) */}
+          {/* PASO 2: DATOS NUEVO PACIENTE */}
           {step === 2 && (
             <div>
               <h2 className="text-xl font-bold mb-6 border-b pb-4 text-teal-800">Datos del Paciente</h2>
@@ -199,25 +218,25 @@ export default function BookingWizard() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* 1. Nombre */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1">Nombre</label>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Nombre *</label>
                   <input className="border p-3 rounded-lg w-full" placeholder="Ej: Juan" value={patientData.name} onChange={e=>setPatientData({...patientData,name:e.target.value})}/>
                 </div>
                 
                 {/* 2. Apellido */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1">Apellido</label>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Apellido *</label>
                   <input className="border p-3 rounded-lg w-full" placeholder="Ej: Pérez" value={patientData.surname} onChange={e=>setPatientData({...patientData,surname:e.target.value})}/>
                 </div>
 
                 {/* 3. Email */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1">Email</label>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Email *</label>
                   <input className="border p-3 rounded-lg w-full" type="email" placeholder="nombre@mail.com" value={patientData.email} onChange={e=>setPatientData({...patientData,email:e.target.value})}/>
                 </div>
 
                 {/* 4. Teléfono */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1">Teléfono</label>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Teléfono *</label>
                   <input className="border p-3 rounded-lg w-full" placeholder="+569 1234 5678" value={patientData.phone} onChange={e=>setPatientData({...patientData,phone:e.target.value})}/>
                 </div>
 
@@ -239,20 +258,28 @@ export default function BookingWizard() {
 
                 {/* 7. Dirección */}
                 <div className="md:col-span-1">
-                  <label className="block text-xs font-bold text-gray-500 mb-1">Dirección (Calle y Número)</label>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Dirección (Calle y Número) *</label>
                   <input className="border p-3 rounded-lg w-full" placeholder="Ej: Av. Providencia 1234" value={patientData.address} onChange={e=>setPatientData({...patientData,address:e.target.value})}/>
                 </div>
 
-                {/* 8. Comuna */}
+                {/* 8. Comuna (DROPDOWN) */}
                 <div className="md:col-span-1">
-                  <label className="block text-xs font-bold text-gray-500 mb-1">Comuna</label>
-                  <input className="border p-3 rounded-lg w-full" placeholder="Ej: Providencia" value={patientData.commune} onChange={e=>setPatientData({...patientData,commune:e.target.value})}/>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Comuna *</label>
+                  <select 
+                    className="border p-3 rounded-lg w-full bg-white text-gray-700"
+                    value={patientData.commune} 
+                    onChange={e=>setPatientData({...patientData,commune:e.target.value})}
+                  >
+                    <option value="">Seleccione Comuna...</option>
+                    {COMUNAS_SANTIAGO.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
                 </div>
-
               </div>
 
               <button 
-                onClick={()=>setStep(3)} 
+                onClick={handleSavePatientForm} 
                 className="bg-teal-600 text-white w-full py-4 rounded-xl hover:bg-teal-700 font-bold mt-8 shadow-lg transition transform hover:scale-[1.01]"
               >
                 GUARDAR Y CONTINUAR

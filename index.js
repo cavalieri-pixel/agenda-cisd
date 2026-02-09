@@ -12,7 +12,7 @@ const app = express();
 const port = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'secret_cisd_key_2026';
 
-// --- CONFIGURACIÓN MERCADOPAGO ---
+// --- MERCADO PAGO ---
 const client = process.env.MP_ACCESS_TOKEN 
   ? new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN }) 
   : null;
@@ -20,7 +20,7 @@ const client = process.env.MP_ACCESS_TOKEN
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// --- CONFIGURACIÓN GOOGLE CALENDAR ---
+// --- GOOGLE CALENDAR ---
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
@@ -62,7 +62,7 @@ app.get('/api/patients/search/:rut', async (req, res) => {
   }
 });
 
-// --- PÚBLICAS: SLOTS DISPONIBLES (CON LÓGICA DE 15 MINUTOS) ---
+// --- PÚBLICAS: SLOTS DISPONIBLES (CON LÓGICA CHILE & 15 MIN) ---
 app.get('/api/public/slots', async (req, res) => {
   const { date, professionalId, duration } = req.query; 
   try {
@@ -91,6 +91,24 @@ app.get('/api/public/slots', async (req, res) => {
       }
     });
 
+    // --- LÓGICA DE TIEMPO "CHILE" ---
+    const now = new Date();
+    // Forzamos la zona horaria a Santiago de Chile
+    const chileTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Santiago" }));
+    
+    const [qYear, qMonth, qDay] = date.split('-').map(Number);
+    
+    // Verificamos si la fecha consultada es HOY en Chile
+    const isToday = (
+        chileTime.getFullYear() === qYear &&
+        chileTime.getMonth() === (qMonth - 1) &&
+        chileTime.getDate() === qDay
+    );
+    
+    // Convertimos hora actual Chile a minutos del día
+    const currentChileMins = chileTime.getHours() * 60 + chileTime.getMinutes();
+    // --------------------------------
+
     const slots = [];
     const toMins = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
     const toTimeStr = (mins) => { 
@@ -107,6 +125,14 @@ app.get('/api/public/slots', async (req, res) => {
       const sStart = currentMins; 
       const sEnd = currentMins + serviceDuration;
       
+      // 1. FILTRO DE PASADO (CHILE): 
+      // Si es hoy y el bloque empieza antes de "ahora + 30 min", lo saltamos.
+      if (isToday && sStart < currentChileMins + 30) {
+        currentMins += interval;
+        continue; 
+      }
+      
+      // 2. FILTRO DE OCUPACIÓN
       const isBusy = existingAppointments.some(appt => {
         const aStart = appt.startTime.getUTCHours() * 60 + appt.startTime.getUTCMinutes();
         const aEnd = appt.endTime.getUTCHours() * 60 + appt.endTime.getUTCMinutes();
@@ -114,12 +140,13 @@ app.get('/api/public/slots', async (req, res) => {
         const overlap = (sStart < aEnd && sEnd > aStart);
         if (!overlap) return false;
 
-        // LÓGICA DE LIBERACIÓN:
+        // Reglas de estado
         if (appt.status === 'CONFIRMED' || appt.status === 'BLOCKED') return true;
         
+        // Regla 15 minutos para pendientes
         if (appt.status === 'PENDING_PAYMENT') {
           const minutesSinceCreation = (new Date() - new Date(appt.createdAt)) / 60000;
-          return minutesSinceCreation < 15; // Bloquea solo si es reciente
+          return minutesSinceCreation < 15; 
         }
         return false;
       });
@@ -129,7 +156,8 @@ app.get('/api/public/slots', async (req, res) => {
     }
     res.json(slots);
   } catch (e) { 
-    console.error(e); res.status(500).json({ error: 'Error calculando horarios' }); 
+    console.error(e); 
+    res.status(500).json({ error: 'Error calculando horarios' }); 
   }
 });
 
@@ -140,7 +168,9 @@ app.get('/api/patients', async (req, res) => {
   try { 
     const p = await prisma.patient.findMany({ orderBy: { name: 'asc' } }); 
     res.json(p); 
-  } catch { res.status(500).json({ error: 'Err' }); } 
+  } catch { 
+    res.status(500).json({ error: 'Err' }); 
+  } 
 });
 
 app.post('/api/patients', async (req, res) => {
@@ -164,21 +194,27 @@ app.put('/api/patients/:id', async (req, res) => {
       data: { rut, name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null } 
     }); 
     res.json(u); 
-  } catch { res.status(500).json({ error: 'Err' }); }
+  } catch { 
+    res.status(500).json({ error: 'Err' }); 
+  }
 });
 
 app.delete('/api/patients/:id', async (req, res) => { 
   try { 
     await prisma.patient.delete({ where: { id: parseInt(req.params.id) } }); 
     res.json({ message: 'Deleted' }); 
-  } catch { res.status(500).json({ error: 'Err' }); } 
+  } catch { 
+    res.status(500).json({ error: 'Err' }); 
+  } 
 });
 
 app.get('/api/patients/:id/history', async (req, res) => { 
   try { 
     const h = await prisma.appointment.findMany({ where: { patientId: parseInt(req.params.id) }, include: { service: true, professional: true }, orderBy: { startTime: 'desc' } }); 
     res.json(h); 
-  } catch { res.status(500).json({ error: 'Err' }); } 
+  } catch { 
+    res.status(500).json({ error: 'Err' }); 
+  } 
 });
 
 // ==========================================
@@ -193,24 +229,35 @@ app.post('/api/professionals', async (req, res) => {
   const { name, email, password, color, phone, slotInterval } = req.body;
   try { 
     const hp = await bcrypt.hash(password, 10); 
-    const n = await prisma.professional.create({ data: { name, email, password: hp, color, phone, slotInterval: parseInt(slotInterval)||30 } }); 
+    const n = await prisma.professional.create({ 
+      data: { name, email, password: hp, color, phone, slotInterval: parseInt(slotInterval)||30 } 
+    }); 
     res.json(n); 
-  } catch { res.status(500).json({ error: 'Err' }); }
+  } catch { 
+    res.status(500).json({ error: 'Err' }); 
+  }
 });
 
 app.put('/api/professionals/:id', async (req, res) => {
   const { name, email, color, phone, slotInterval } = req.body;
   try { 
-    const u = await prisma.professional.update({ where: { id: parseInt(req.params.id) }, data: { name, email, color, phone, slotInterval: parseInt(slotInterval)||30 } }); 
+    const u = await prisma.professional.update({ 
+      where: { id: parseInt(req.params.id) }, 
+      data: { name, email, color, phone, slotInterval: parseInt(slotInterval)||30 } 
+    }); 
     res.json(u); 
-  } catch { res.status(500).json({ error: 'Err' }); }
+  } catch { 
+    res.status(500).json({ error: 'Err' }); 
+  }
 });
 
 app.delete('/api/professionals/:id', async (req, res) => { 
   try { 
     await prisma.professional.delete({ where: { id: parseInt(req.params.id) } }); 
     res.json({ message: 'Deleted' }); 
-  } catch { res.status(500).json({ error: 'Err' }); } 
+  } catch { 
+    res.status(500).json({ error: 'Err' }); 
+  } 
 });
 
 app.post('/api/professionals/import', async (req, res) => {
@@ -244,24 +291,35 @@ app.get('/api/services', async (req, res) => {
 app.post('/api/services', async (req, res) => {
   const { category, specialty, name, code, price, discountValue, description, durationMin, isTelemed } = req.body;
   try { 
-    const n = await prisma.service.create({ data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed: isTelemed||false } }); 
+    const n = await prisma.service.create({ 
+      data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed: isTelemed||false } 
+    }); 
     res.json(n); 
-  } catch { res.status(500).json({ error: 'Error' }); }
+  } catch { 
+    res.status(500).json({ error: 'Error' }); 
+  }
 });
 
 app.put('/api/services/:id', async (req, res) => {
   const { category, specialty, name, code, price, discountValue, description, durationMin, isTelemed } = req.body;
   try { 
-    const u = await prisma.service.update({ where: { id: parseInt(req.params.id) }, data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed } }); 
+    const u = await prisma.service.update({ 
+      where: { id: parseInt(req.params.id) }, 
+      data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed } 
+    }); 
     res.json(u); 
-  } catch { res.status(500).json({ error: 'Error' }); }
+  } catch { 
+    res.status(500).json({ error: 'Error' }); 
+  }
 });
 
 app.delete('/api/services/:id', async (req, res) => { 
   try { 
     await prisma.service.delete({ where: { id: parseInt(req.params.id) } }); 
     res.json({ message: 'Deleted' }); 
-  } catch { res.status(500).json({ error: 'Err' }); } 
+  } catch { 
+    res.status(500).json({ error: 'Err' }); 
+  } 
 });
 
 app.post('/api/services/import', async (req, res) => { 
@@ -284,7 +342,9 @@ app.post('/api/services/import', async (req, res) => {
         } 
       }); 
       c++; 
-    } catch (e) { console.error("Error importando:", i.name); } 
+    } catch (e) { 
+      console.error("Error importando:", i.name); 
+    } 
   } 
   res.json({ message: `Procesados: ${c}` }); 
 });
@@ -317,7 +377,9 @@ app.post('/api/availability', async (req, res) => {
       })));
     }
     res.json({ message: 'OK' }); 
-  } catch { res.status(500).json({ error: 'Err' }); }
+  } catch { 
+    res.status(500).json({ error: 'Err' }); 
+  }
 });
 
 // ==========================================
@@ -331,7 +393,9 @@ app.get('/api/appointments', async (req, res) => {
       include: { patient: true, service: true } 
     }); 
     res.json(appts); 
-  } catch { res.status(500).json({ error: 'Err' }); }
+  } catch { 
+    res.status(500).json({ error: 'Err' }); 
+  }
 });
 
 app.post('/api/appointments', async (req, res) => {
@@ -342,7 +406,7 @@ app.post('/api/appointments', async (req, res) => {
   } = req.body;
 
   try {
-    // --- TIPO: BLOQUEO ---
+    // A. BLOQUEOS
     if (type === 'BLOCK') {
       const start = new Date(startTime); 
       const end = new Date(endTime);
@@ -358,14 +422,13 @@ app.post('/api/appointments', async (req, res) => {
       return res.json(block);
     }
 
-    // --- TIPO: CITA PACIENTE ---
+    // B. CITAS PACIENTE
     const s = await prisma.service.findUnique({ where: { id: parseInt(serviceId) } });
     if (!s) return res.status(404).json({ error: 'Servicio no encontrado' });
 
     const start = new Date(startTime);
     const end = new Date(start.getTime() + s.durationMin * 60000);
 
-    // Validación de conflicto (Lógica 15 min)
     const existing = await prisma.appointment.findMany({
       where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] }
     });
@@ -387,14 +450,13 @@ app.post('/api/appointments', async (req, res) => {
       create: { rut, name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null }
     });
     
-    // Si vale $0, se confirma directo. Si no, pendiente.
     const initialStatus = s.price > 0 ? 'PENDING_PAYMENT' : 'CONFIRMED';
 
     const appt = await prisma.appointment.create({
       data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), patientId: p.id, serviceId: s.id, price: s.price, paymentStatus: 'PENDING', status: initialStatus }
     });
 
-    // Crear Meet
+    // Google Meet
     let meetLink = null;
     if (s.isTelemed || s.name.toLowerCase().includes('tele')) {
        try {
@@ -407,7 +469,7 @@ app.post('/api/appointments', async (req, res) => {
       } catch {}
     }
 
-    // Crear Preferencia MercadoPago
+    // MercadoPago Preference
     let paymentLink = null;
     if (s.price > 0 && client) {
       try {
@@ -428,10 +490,13 @@ app.post('/api/appointments', async (req, res) => {
     }
 
     res.json({ ...appt, paymentLink });
-  } catch (error) { console.error(error); res.status(500).json({ error: 'Error creating appt' }); }
+  } catch (error) { 
+    console.error(error); 
+    res.status(500).json({ error: 'Error creating appt' }); 
+  }
 });
 
-// --- NUEVO: WEBHOOK MERCADOPAGO ---
+// --- WEBHOOK MERCADOPAGO ---
 app.post('/api/webhook/mercadopago', async (req, res) => {
   const { query } = req;
   const topic = query.topic || query.type;
@@ -444,22 +509,17 @@ app.post('/api/webhook/mercadopago', async (req, res) => {
       
       if (paymentData.status === 'approved') {
         const appointmentId = parseInt(paymentData.external_reference);
-        
         await prisma.appointment.update({
           where: { id: appointmentId },
-          data: { 
-            status: 'CONFIRMED', 
-            paymentStatus: 'PAID', 
-            mpPaymentId: String(paymentId) 
-          }
+          data: { status: 'CONFIRMED', paymentStatus: 'PAID', mpPaymentId: String(paymentId) }
         });
         console.log(`✅ Cita #${appointmentId} confirmada por pago.`);
       }
     }
     res.sendStatus(200);
-  } catch (error) {
-    console.error('Webhook Error:', error);
-    res.sendStatus(500);
+  } catch (error) { 
+    console.error('Webhook Error:', error); 
+    res.sendStatus(500); 
   }
 });
 
@@ -472,32 +532,27 @@ app.put('/api/appointments/:id', async (req, res) => {
     if (!appointment) return res.status(404).json({ error: 'Not found' });
     
     const dataToUpdate = {};
-    
     if (newStartTime) {
       const newStart = new Date(newStartTime);
       const duration = appointment.endTime.getTime() - appointment.startTime.getTime();
       const newEnd = new Date(newStart.getTime() + duration);
       dataToUpdate.startTime = newStart; 
       dataToUpdate.endTime = newEnd;
-      
       if (appointment.googleEventId) { 
         try { 
-          await calendar.events.patch({ 
-            calendarId: 'primary', 
-            eventId: appointment.googleEventId, 
-            requestBody: { start: { dateTime: newStart }, end: { dateTime: newEnd } } 
-          }); 
+          await calendar.events.patch({ calendarId: 'primary', eventId: appointment.googleEventId, requestBody: { start: { dateTime: newStart }, end: { dateTime: newEnd } } }); 
         } catch {} 
       }
     }
-    
     if (clinicalNote !== undefined) dataToUpdate.clinicalNote = clinicalNote;
     if (paymentStatus) dataToUpdate.paymentStatus = paymentStatus;
     if (paymentMethod) dataToUpdate.paymentMethod = paymentMethod;
     
     const updated = await prisma.appointment.update({ where: { id: parseInt(id) }, data: dataToUpdate });
     res.json(updated);
-  } catch { res.status(500).json({ error: 'Error update' }); }
+  } catch { 
+    res.status(500).json({ error: 'Error update' }); 
+  }
 });
 
 // --- ELIMINAR CITA ---
@@ -512,7 +567,9 @@ app.delete('/api/appointments/:id', async (req, res) => {
     }
     await prisma.appointment.delete({ where: { id: parseInt(id) } });
     res.json({ message: 'Deleted' });
-  } catch { res.status(500).json({ error: 'Error delete' }); }
+  } catch { 
+    res.status(500).json({ error: 'Error delete' }); 
+  }
 });
 
 app.listen(port, () => { console.log(`🚀 CISD Ready on port ${port}`); });

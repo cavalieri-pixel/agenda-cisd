@@ -62,25 +62,34 @@ app.get('/api/patients/search/:rut', async (req, res) => {
   }
 });
 
-// --- PÚBLICAS: SLOTS DISPONIBLES (CON AUTO-LIMPIEZA Y LOGS) ---
+// --- PÚBLICAS: SLOTS DISPONIBLES (CON LIMPIEZA DETALLADA) ---
 app.get('/api/public/slots', async (req, res) => {
   const { date, professionalId, duration } = req.query; 
   try {
-    // 1. AUTO-LIMPIEZA DE BASURA
-    const now = new Date();
-    const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
-    
-    // Log para depuración en Render
-    console.log(`[SLOTS] Hora Servidor: ${now.toISOString()} | Borrando pendientes antes de: ${fifteenMinutesAgo.toISOString()}`);
-
-    const deleted = await prisma.appointment.deleteMany({
-      where: {
-        status: 'PENDING_PAYMENT',
-        createdAt: { lt: fifteenMinutesAgo }
-      }
+    // === LIMPIEZA DEPURADA (LOGS) ===
+    const pendingAppts = await prisma.appointment.findMany({ 
+        where: { status: 'PENDING_PAYMENT' } 
     });
     
-    if (deleted.count > 0) console.log(`[SLOTS] 🧹 Se eliminaron ${deleted.count} citas expiradas.`);
+    const now = new Date();
+    // 15 minutos atrás
+    const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
+    
+    if (pendingAppts.length > 0) {
+      console.log(`[SLOTS] Revisando ${pendingAppts.length} citas pendientes para limpieza...`);
+      for (const appt of pendingAppts) {
+        const created = new Date(appt.createdAt);
+        
+        // Si se creó ANTES del tiempo de corte, borrar.
+        if (created < fifteenMinutesAgo) {
+          console.log(`[SLOTS] 🗑️ Borrando cita ID ${appt.id} (Creada: ${created.toISOString()} | Límite: ${fifteenMinutesAgo.toISOString()})`);
+          await prisma.appointment.delete({ where: { id: appt.id } });
+        } else {
+            console.log(`[SLOTS] ⏳ Manteniendo cita ID ${appt.id} (Creada hace ${(now - created)/60000} min)`);
+        }
+      }
+    }
+    // ==========================
 
     const searchDate = new Date(date);
     const jsDay = searchDate.getUTCDay(); 
@@ -109,7 +118,6 @@ app.get('/api/public/slots', async (req, res) => {
 
     // LÓGICA DE TIEMPO "CHILE"
     const chileTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Santiago" }));
-    
     const [qYear, qMonth, qDay] = date.split('-').map(Number);
     const isToday = (
         chileTime.getFullYear() === qYear &&
@@ -134,13 +142,13 @@ app.get('/api/public/slots', async (req, res) => {
       const sStart = currentMins; 
       const sEnd = currentMins + serviceDuration;
       
-      // FILTRO PASADO
+      // Filtro de horario pasado (Chile)
       if (isToday && sStart < currentChileMins + 30) {
         currentMins += interval;
         continue; 
       }
       
-      // FILTRO OCUPACIÓN
+      // Filtro de ocupación
       const isBusy = existingAppointments.some(appt => {
         const aStart = appt.startTime.getUTCHours() * 60 + appt.startTime.getUTCMinutes();
         const aEnd = appt.endTime.getUTCHours() * 60 + appt.endTime.getUTCMinutes();
@@ -173,7 +181,12 @@ app.post('/api/patients', async (req, res) => {
   const { rut, name, email, phone, address, prevision, birthDate } = req.body;
   try { 
     const n = await prisma.patient.create({ 
-      data: { rut, name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null } 
+      data: { 
+        rut, name, email, phone, 
+        address: address||null, 
+        prevision: prevision||null, 
+        birthDate: birthDate ? new Date(birthDate) : null 
+      } 
     }); 
     res.json(n); 
   } catch (e) { 
@@ -187,7 +200,12 @@ app.put('/api/patients/:id', async (req, res) => {
   try { 
     const u = await prisma.patient.update({ 
       where: { id: parseInt(req.params.id) }, 
-      data: { rut, name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null } 
+      data: { 
+        rut, name, email, phone, 
+        address: address||null, 
+        prevision: prevision||null, 
+        birthDate: birthDate ? new Date(birthDate) : null 
+      } 
     }); 
     res.json(u); 
   } catch { 
@@ -206,7 +224,11 @@ app.delete('/api/patients/:id', async (req, res) => {
 
 app.get('/api/patients/:id/history', async (req, res) => { 
   try { 
-    const h = await prisma.appointment.findMany({ where: { patientId: parseInt(req.params.id) }, include: { service: true, professional: true }, orderBy: { startTime: 'desc' } }); 
+    const h = await prisma.appointment.findMany({ 
+      where: { patientId: parseInt(req.params.id) }, 
+      include: { service: true, professional: true }, 
+      orderBy: { startTime: 'desc' } 
+    }); 
     res.json(h); 
   } catch { 
     res.status(500).json({ error: 'Err' }); 
@@ -226,7 +248,12 @@ app.post('/api/professionals', async (req, res) => {
   try { 
     const hp = await bcrypt.hash(password, 10); 
     const n = await prisma.professional.create({ 
-      data: { name, email, password: hp, color, phone, slotInterval: parseInt(slotInterval)||30 } 
+      data: { 
+        name, email, 
+        password: hp, 
+        color, phone, 
+        slotInterval: parseInt(slotInterval)||30 
+      } 
     }); 
     res.json(n); 
   } catch { 
@@ -239,7 +266,10 @@ app.put('/api/professionals/:id', async (req, res) => {
   try { 
     const u = await prisma.professional.update({ 
       where: { id: parseInt(req.params.id) }, 
-      data: { name, email, color, phone, slotInterval: parseInt(slotInterval)||30 } 
+      data: { 
+        name, email, color, phone, 
+        slotInterval: parseInt(slotInterval)||30 
+      } 
     }); 
     res.json(u); 
   } catch { 
@@ -262,7 +292,16 @@ app.post('/api/professionals/import', async (req, res) => {
   for(const i of data) { 
     try { 
       const hp = await bcrypt.hash(i.password||'cisd123',10); 
-      await prisma.professional.create({ data: { name:i.name, email:i.email, password:hp, phone:i.phone||'', color:i.color||'#3788d8', slotInterval: parseInt(i.slotInterval)||30 } }); 
+      await prisma.professional.create({ 
+        data: { 
+          name:i.name, 
+          email:i.email, 
+          password:hp, 
+          phone:i.phone||'', 
+          color:i.color||'#3788d8', 
+          slotInterval: parseInt(i.slotInterval)||30 
+        } 
+      }); 
       c++; 
     } catch {} 
   } 
@@ -272,7 +311,9 @@ app.post('/api/professionals/import', async (req, res) => {
 app.get('/api/professionals/export', async (req, res) => { 
   const p = await prisma.professional.findMany(); 
   let csv='name,email,phone,color,slotInterval\n'; 
-  p.forEach(x=>csv+=`"${x.name}","${x.email}","${x.phone||''}","${x.color}",${x.slotInterval}\n`); 
+  p.forEach(x => {
+      csv += `"${x.name}","${x.email}","${x.phone||''}","${x.color}",${x.slotInterval}\n`;
+  });
   res.header('Content-Type','text/csv').attachment('profesionales.csv').send(csv); 
 });
 
@@ -288,7 +329,14 @@ app.post('/api/services', async (req, res) => {
   const { category, specialty, name, code, price, discountValue, description, durationMin, isTelemed } = req.body;
   try { 
     const n = await prisma.service.create({ 
-      data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed: isTelemed||false } 
+      data: { 
+        category, specialty, name, code, 
+        price: parseInt(price)||0, 
+        discountValue: parseInt(discountValue)||0, 
+        description, 
+        durationMin: parseInt(durationMin)||30, 
+        isTelemed: isTelemed||false 
+      } 
     }); 
     res.json(n); 
   } catch { 
@@ -301,7 +349,14 @@ app.put('/api/services/:id', async (req, res) => {
   try { 
     const u = await prisma.service.update({ 
       where: { id: parseInt(req.params.id) }, 
-      data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed } 
+      data: { 
+        category, specialty, name, code, 
+        price: parseInt(price)||0, 
+        discountValue: parseInt(discountValue)||0, 
+        description, 
+        durationMin: parseInt(durationMin)||30, 
+        isTelemed 
+      } 
     }); 
     res.json(u); 
   } catch { 
@@ -369,7 +424,12 @@ app.post('/api/availability', async (req, res) => {
     await prisma.availability.deleteMany({ where: { professionalId: parseInt(professionalId) } }); 
     if(schedules.length > 0) {
       await Promise.all(schedules.map(s => prisma.availability.create({ 
-        data: { professionalId: parseInt(professionalId), dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime } 
+        data: { 
+            professionalId: parseInt(professionalId), 
+            dayOfWeek: s.dayOfWeek, 
+            startTime: s.startTime, 
+            endTime: s.endTime 
+        } 
       })));
     }
     res.json({ message: 'OK' }); 
@@ -382,24 +442,33 @@ app.post('/api/availability', async (req, res) => {
 //           CITAS Y AGENDAMIENTO
 // ==========================================
 
-// --- LEER CITAS (PARA ADMIN - CON AUTO-LIMPIEZA) ---
+// --- LEER CITAS (PARA ADMIN - CON LIMPIEZA DETALLADA) ---
 app.get('/api/appointments', async (req, res) => {
   const { professionalId, start, end } = req.query;
   try { 
-    // 1. AUTO-LIMPIEZA DE BASURA (Citas > 15 min sin pagar)
+    // 1. AUTO-LIMPIEZA CON LOGS (Para saber qué está pasando)
+    const pendingAppts = await prisma.appointment.findMany({ 
+        where: { status: 'PENDING_PAYMENT' } 
+    });
+    
     const now = new Date();
     const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
     
-    console.log(`[ADMIN] Buscando citas basura anteriores a: ${fifteenMinutesAgo.toISOString()}`);
-
-    const deleted = await prisma.appointment.deleteMany({
-      where: {
-        status: 'PENDING_PAYMENT',
-        createdAt: { lt: fifteenMinutesAgo }
+    if (pendingAppts.length > 0) {
+      console.log(`[ADMIN] Se encontraron ${pendingAppts.length} citas pendientes. Revisando caducidad...`);
+      for (const appt of pendingAppts) {
+        const created = new Date(appt.createdAt);
+        // Debug: Mostrar fechas
+        console.log(` > Cita ${appt.id} | Creada: ${created.toLocaleTimeString()} | Expira si es antes de: ${fifteenMinutesAgo.toLocaleTimeString()}`);
+        
+        if (created < fifteenMinutesAgo) {
+          console.log(`   -> 🗑️ BORRANDO cita ${appt.id} por expiración.`);
+          await prisma.appointment.delete({ where: { id: appt.id } });
+        } else {
+          console.log(`   -> ⏳ MANTENIENDO cita ${appt.id} (aún vigente).`);
+        }
       }
-    });
-    
-    if (deleted.count > 0) console.log(`[ADMIN] 🧹 Se eliminaron ${deleted.count} citas basura.`);
+    }
 
     // 2. Traer lo que queda (Solo citas reales)
     const appts = await prisma.appointment.findMany({ 
@@ -430,9 +499,15 @@ app.post('/api/appointments', async (req, res) => {
     // A. BLOQUEOS
     if (type === 'BLOCK') {
       const start = new Date(startTime); const end = new Date(endTime);
-      const conflict = await prisma.appointment.findFirst({ where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] } });
+      
+      const conflict = await prisma.appointment.findFirst({ 
+        where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] } 
+      });
       if (conflict) return res.status(409).json({ error: 'Conflicto de horario' });
-      const block = await prisma.appointment.create({ data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), status: 'BLOCKED', title: title || 'Bloqueo' } });
+      
+      const block = await prisma.appointment.create({ 
+        data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), status: 'BLOCKED', title: title || 'Bloqueo' } 
+      });
       return res.json(block);
     }
 
@@ -443,12 +518,11 @@ app.post('/api/appointments', async (req, res) => {
     const start = new Date(startTime);
     const end = new Date(start.getTime() + s.durationMin * 60000);
 
-    // Revisar Conflicto (Incluyendo las pendientes recientes)
     const existing = await prisma.appointment.findMany({
       where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] }
     });
     
-    // Si encontramos cualquier cita en ese horario, ES UN CONFLICTO.
+    // Si encontramos conflicto, rechazamos (asumimos que la limpieza ya ocurrió al hacer el GET de slots antes)
     if (existing.length > 0) {
       return res.status(409).json({ error: 'Horario ya ocupado por otra persona.' });
     }
@@ -497,7 +571,10 @@ app.post('/api/appointments', async (req, res) => {
     }
 
     res.json({ ...appt, paymentLink });
-  } catch (error) { console.error(error); res.status(500).json({ error: 'Error creating appt' }); }
+  } catch (error) { 
+    console.error(error); 
+    res.status(500).json({ error: 'Error creating appt' }); 
+  }
 });
 
 // --- WEBHOOK MERCADOPAGO ---
@@ -521,7 +598,10 @@ app.post('/api/webhook/mercadopago', async (req, res) => {
       }
     }
     res.sendStatus(200);
-  } catch (error) { console.error('Webhook Error:', error); res.sendStatus(500); }
+  } catch (error) { 
+    console.error('Webhook Error:', error); 
+    res.sendStatus(500); 
+  }
 });
 
 // --- ACTUALIZAR CITA ---
@@ -531,6 +611,7 @@ app.put('/api/appointments/:id', async (req, res) => {
   try {
     const appointment = await prisma.appointment.findUnique({ where: { id: parseInt(id) }, include: { service: true } });
     if (!appointment) return res.status(404).json({ error: 'Not found' });
+    
     const dataToUpdate = {};
     if (newStartTime) {
       const newStart = new Date(newStartTime);
@@ -547,9 +628,12 @@ app.put('/api/appointments/:id', async (req, res) => {
     if (clinicalNote !== undefined) dataToUpdate.clinicalNote = clinicalNote;
     if (paymentStatus) dataToUpdate.paymentStatus = paymentStatus;
     if (paymentMethod) dataToUpdate.paymentMethod = paymentMethod;
+    
     const updated = await prisma.appointment.update({ where: { id: parseInt(id) }, data: dataToUpdate });
     res.json(updated);
-  } catch { res.status(500).json({ error: 'Error update' }); }
+  } catch { 
+    res.status(500).json({ error: 'Error update' }); 
+  }
 });
 
 // --- ELIMINAR CITA ---
@@ -557,10 +641,16 @@ app.delete('/api/appointments/:id', async (req, res) => {
   const { id } = req.params;
   try {
     const appt = await prisma.appointment.findUnique({ where: { id: parseInt(id) } });
-    if (appt && appt.googleEventId) { try { await calendar.events.delete({ calendarId: 'primary', eventId: appt.googleEventId }); } catch {} }
+    if (appt && appt.googleEventId) { 
+      try { 
+        await calendar.events.delete({ calendarId: 'primary', eventId: appt.googleEventId }); 
+      } catch {} 
+    }
     await prisma.appointment.delete({ where: { id: parseInt(id) } });
     res.json({ message: 'Deleted' });
-  } catch { res.status(500).json({ error: 'Error delete' }); }
+  } catch { 
+    res.status(500).json({ error: 'Error delete' }); 
+  }
 });
 
 app.listen(port, () => { console.log(`🚀 CISD Ready on port ${port}`); });

@@ -20,13 +20,22 @@ model Professional {
 }
 
 model Service {
-  id           Int           @id @default(autoincrement())
-  name         String
-  code         String        @unique
-  durationMin  Int
-  price        Int
-  isTelemed    Boolean       @default(false)
-  appointments Appointment[]
+  id            Int           @id @default(autoincrement())
+  
+  // --- DATOS DE TRATAMIENTO ---
+  category      String?       @default("General") // Ej: Consulta, Procedimiento
+  specialty     String?       // Ej: Kinesiología, Psicología
+  name          String
+  code          String        @unique
+  price         Int
+  discountValue Int           @default(0) // Descuento en pesos
+  description   String?       @db.Text    // Descripción larga
+  // --------------------------
+
+  durationMin   Int           @default(30)
+  isTelemed     Boolean       @default(false)
+  
+  appointments  Appointment[]
 }
 
 model Patient {
@@ -36,11 +45,11 @@ model Patient {
   email        String
   phone        String?
   
-  // --- NUEVOS DATOS PACIENTE ---
+  // --- DATOS PACIENTE ---
   address      String?
-  prevision    String?       // Ej: Fonasa, Isapre, Particular
+  prevision    String?       
   birthDate    DateTime?
-  // ---------------------------
+  // --------------------
 
   appointments Appointment[]
 }

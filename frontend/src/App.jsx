@@ -12,23 +12,19 @@ import { ProfessionalsView, ServicesView, ScheduleView, PatientsView } from './c
 import BookingWizard from './components/BookingWizard';
 
 function App() {
-  // 1. HOOKS PRIMERO
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [currentHash, setCurrentHash] = useState(window.location.hash);
   
-  // Admin States
   const [activeView, setActiveView] = useState('agenda');
   const [profesionales, setProfesionales] = useState([]); 
   const [citas, setCitas] = useState([]);
   const [profesionalSeleccionado, setProfesionalSeleccionado] = useState(null);
   
-  // Modales
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
 
-  // 2. EFECTOS
   useEffect(() => {
     const handleHashChange = () => setCurrentHash(window.location.hash);
     window.addEventListener('hashchange', handleHashChange);
@@ -56,7 +52,6 @@ function App() {
     }
   }, [profesionalSeleccionado, activeView, token, currentHash]);
 
-  // 3. FUNCIONES
   const handleLogout = () => {
     localStorage.removeItem('token');
     setToken(null);
@@ -94,14 +89,10 @@ function App() {
     catch { info.revert(); alert("Error al mover"); }
   };
 
-  // 4. RENDERIZADO
-  
-  // A. MODO PACIENTE
   if (currentHash !== '#/admin') {
     return <BookingWizard />;
   }
 
-  // B. ADMIN - LOGIN
   if (!token) {
     return (
       <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
@@ -111,8 +102,9 @@ function App() {
     );
   }
 
-  // C. ADMIN - DASHBOARD
-  if (!profesionales) return <div className="h-screen flex items-center justify-center">Cargando sistema...</div>;
+  if (!profesionales.length && activeView === 'agenda') { 
+     return <div className="h-screen flex items-center justify-center">Cargando sistema...</div>;
+  }
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">

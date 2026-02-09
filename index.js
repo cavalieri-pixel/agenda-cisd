@@ -48,29 +48,37 @@ app.post('/api/login', async (req, res) => {
 //      RUTAS PÚBLICAS (AGENDAMIENTO)
 // ==========================================
 
-// 1. BUSCAR PACIENTE POR RUT (NUEVO)
+// 1. BUSCAR PACIENTE
 app.get('/api/patients/search/:rut', async (req, res) => {
   const { rut } = req.params;
   try {
     const patient = await prisma.patient.findUnique({ where: { rut } });
     if (patient) return res.json(patient);
     res.status(404).json({ error: 'Paciente no encontrado' });
-  } catch {
-    res.status(500).json({ error: 'Error servidor' });
-  }
+  } catch { res.status(500).json({ error: 'Error servidor' }); }
 });
 
-// 2. SLOTS DISPONIBLES
+// 2. SLOTS DISPONIBLES (CORREGIDO)
 app.get('/api/public/slots', async (req, res) => {
   const { date, professionalId, duration } = req.query; 
   try {
     const searchDate = new Date(date);
-    const dayOfWeek = searchDate.getUTCDay(); 
     
+    // 1. Obtener día estándar (0=Dom, 1=Lun...)
+    const jsDay = searchDate.getUTCDay(); 
+
+    // 2. TRADUCTOR DE DÍAS: Convertir al formato de tu Admin (0=Lun ... 6=Dom)
+    // Si jsDay es 0 (Dom) -> queremos 6.
+    // Si jsDay es 1 (Lun) -> queremos 0.
+    // Fórmula: (dia + 6) % 7
+    const adjustedDay = (jsDay === 0) ? 6 : jsDay - 1;
+
+    // 3. Buscar horario usando el día ajustado
     const schedule = await prisma.availability.findFirst({
-      where: { professionalId: parseInt(professionalId), dayOfWeek }
+      where: { professionalId: parseInt(professionalId), dayOfWeek: adjustedDay }
     });
-    if (!schedule) return res.json([]);
+    
+    if (!schedule) return res.json([]); // Si no hay horario para este día, devolver vacío
 
     const startOfDay = new Date(date); startOfDay.setUTCHours(0,0,0,0);
     const endOfDay = new Date(date); endOfDay.setUTCHours(23,59,59,999);
@@ -155,18 +163,14 @@ app.post('/api/availability', async (req, res) => {
   const { professionalId, schedules } = req.body; try { await prisma.availability.deleteMany({ where: { professionalId: parseInt(professionalId) } }); if(schedules.length>0) await Promise.all(schedules.map(s => prisma.availability.create({ data: { professionalId: parseInt(professionalId), dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime } }))); res.json({ message: 'OK' }); } catch { res.status(500).json({ error: 'Err' }); }
 });
 
-// --- CITAS (CREAR, MERCADOPAGO Y GOOGLE) ---
+// --- CITAS ---
 app.get('/api/appointments', async (req, res) => {
   const { professionalId, start, end } = req.query;
   try { const appts = await prisma.appointment.findMany({ where: { professionalId: parseInt(professionalId), startTime: { gte: new Date(start) }, endTime: { lte: new Date(end) } }, include: { patient: true, service: true } }); res.json(appts); } catch { res.status(500).json({ error: 'Err' }); }
 });
 
 app.post('/api/appointments', async (req, res) => {
-  const { 
-    professionalId, serviceCode, startTime, 
-    rut, name, email, phone, address, prevision, birthDate 
-  } = req.body;
-
+  const { professionalId, serviceCode, startTime, rut, name, email, phone, address, prevision, birthDate } = req.body;
   try {
     const s = await prisma.service.findUnique({ where: { code: serviceCode } });
     if (!s) return res.status(404).json({ error: 'Service not found' });
@@ -174,17 +178,11 @@ app.post('/api/appointments', async (req, res) => {
     const start = new Date(startTime);
     const end = new Date(start.getTime() + s.durationMin * 60000);
 
-    // 🛡️ SEGURIDAD ANTI-CHOQUES
     const conflict = await prisma.appointment.findFirst({
-        where: {
-            professionalId: parseInt(professionalId),
-            status: { not: 'CANCELLED' },
-            AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ]
-        }
+        where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] }
     });
     if (conflict) return res.status(409).json({ error: 'Horario ocupado.' });
 
-    // Upsert Paciente
     let p = await prisma.patient.upsert({
       where: { rut: rut },
       update: { name, email, phone, address: address || null, prevision: prevision || null, birthDate: birthDate ? new Date(birthDate) : null },
@@ -192,60 +190,31 @@ app.post('/api/appointments', async (req, res) => {
     });
     
     let meetLink = null, googleEventId = null;
-
-    // Google Calendar
     if (s.isTelemed || s.name.toLowerCase().includes('tele')) {
       try {
         const gRes = await calendar.events.insert({
           calendarId: 'primary', conferenceDataVersion: 1,
-          requestBody: {
-            summary: `Cita CISD: ${name} - ${s.name}`, description: `Cita con ${s.name}. Paciente: ${name}`,
-            start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() },
-            conferenceData: { createRequest: { requestId: "cisd-" + Date.now(), conferenceSolutionKey: { type: "hangoutsMeet" } } },
-            attendees: [{ email }]
-          }
+          requestBody: { summary: `Cita CISD: ${name} - ${s.name}`, description: `Cita con ${s.name}. Paciente: ${name}`, start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() }, conferenceData: { createRequest: { requestId: "cisd-" + Date.now(), conferenceSolutionKey: { type: "hangoutsMeet" } } }, attendees: [{ email }] }
         });
         meetLink = gRes.data.hangoutLink; googleEventId = gRes.data.id;
       } catch (e) { console.error('Google Error', e); }
     }
 
-    // MercadoPago
-    let preferenceId = null;
-    let paymentLink = null;
-
+    let preferenceId = null; let paymentLink = null;
     if (s.price > 0 && client) {
       try {
         const preference = new Preference(client);
         const result = await preference.create({
-          body: {
-            items: [{ title: `Consulta: ${s.name}`, quantity: 1, unit_price: s.price }],
-            payer: { email: email, name: name },
-            back_urls: {
-              success: "https://agenda-cisd-web.onrender.com/", 
-              failure: "https://agenda-cisd-web.onrender.com/",
-              pending: "https://agenda-cisd-web.onrender.com/"
-            },
-            auto_return: "approved",
-          }
+          body: { items: [{ title: `Consulta: ${s.name}`, quantity: 1, unit_price: s.price }], payer: { email: email, name: name }, back_urls: { success: "https://agenda-cisd-web.onrender.com/", failure: "https://agenda-cisd-web.onrender.com/", pending: "https://agenda-cisd-web.onrender.com/" }, auto_return: "approved" }
         });
-        preferenceId = result.id;
-        paymentLink = result.init_point;
+        preferenceId = result.id; paymentLink = result.init_point;
       } catch (mpError) { console.error("Error MP:", mpError); }
     }
 
-    // Guardar Cita
     const appt = await prisma.appointment.create({
-      data: { 
-        startTime: start, endTime: end, professionalId: parseInt(professionalId), patientId: p.id, serviceId: s.id, 
-        meetLink, googleEventId,
-        price: s.price,
-        mpPreferenceId: preferenceId,
-        paymentStatus: 'PENDING'
-      }
+      data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), patientId: p.id, serviceId: s.id, meetLink, googleEventId, price: s.price, mpPreferenceId: preferenceId, paymentStatus: 'PENDING' }
     });
-
     res.json({ ...appt, paymentLink });
-
   } catch (error) { res.status(500).json({ error: 'Error creating appt' }); }
 });
 

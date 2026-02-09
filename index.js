@@ -12,7 +12,6 @@ const app = express();
 const port = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'secret_cisd_key_2026';
 
-// --- CONFIGURACIÓN MERCADOPAGO ---
 const client = process.env.MP_ACCESS_TOKEN 
   ? new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN }) 
   : null;
@@ -20,7 +19,6 @@ const client = process.env.MP_ACCESS_TOKEN
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// --- CONFIGURACIÓN GOOGLE CALENDAR ---
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
@@ -46,7 +44,23 @@ app.post('/api/login', async (req, res) => {
   } catch (error) { res.status(500).json({ error: 'Error al iniciar sesión' }); }
 });
 
-// --- RUTA PÚBLICA: SLOTS DISPONIBLES ---
+// ==========================================
+//      RUTAS PÚBLICAS (AGENDAMIENTO)
+// ==========================================
+
+// 1. BUSCAR PACIENTE POR RUT (NUEVO)
+app.get('/api/patients/search/:rut', async (req, res) => {
+  const { rut } = req.params;
+  try {
+    const patient = await prisma.patient.findUnique({ where: { rut } });
+    if (patient) return res.json(patient);
+    res.status(404).json({ error: 'Paciente no encontrado' });
+  } catch {
+    res.status(500).json({ error: 'Error servidor' });
+  }
+});
+
+// 2. SLOTS DISPONIBLES
 app.get('/api/public/slots', async (req, res) => {
   const { date, professionalId, duration } = req.query; 
   try {
@@ -97,7 +111,7 @@ app.get('/api/public/slots', async (req, res) => {
   } catch { res.status(500).json({ error: 'Error calculando horarios' }); }
 });
 
-// --- GESTIÓN DE PACIENTES ---
+// --- PACIENTES ---
 app.get('/api/patients', async (req, res) => { try { const p = await prisma.patient.findMany({ orderBy: { name: 'asc' } }); res.json(p); } catch { res.status(500).json({ error: 'Err' }); } });
 app.post('/api/patients', async (req, res) => {
   const { rut, name, email, phone } = req.body;
@@ -147,7 +161,6 @@ app.get('/api/appointments', async (req, res) => {
   try { const appts = await prisma.appointment.findMany({ where: { professionalId: parseInt(professionalId), startTime: { gte: new Date(start) }, endTime: { lte: new Date(end) } }, include: { patient: true, service: true } }); res.json(appts); } catch { res.status(500).json({ error: 'Err' }); }
 });
 
-// *** RUTA CREAR CITA CON VALIDACIÓN DE TOPE DE HORARIO ***
 app.post('/api/appointments', async (req, res) => {
   const { 
     professionalId, serviceCode, startTime, 
@@ -155,33 +168,23 @@ app.post('/api/appointments', async (req, res) => {
   } = req.body;
 
   try {
-    // 1. Calcular Tiempos
     const s = await prisma.service.findUnique({ where: { code: serviceCode } });
     if (!s) return res.status(404).json({ error: 'Service not found' });
 
     const start = new Date(startTime);
     const end = new Date(start.getTime() + s.durationMin * 60000);
 
-    // ==========================================================
-    // 🛡️ SEGURIDAD ANTI-CHOQUES (NUEVO)
-    // Verificar si ya existe una cita que se cruce en este horario
+    // 🛡️ SEGURIDAD ANTI-CHOQUES
     const conflict = await prisma.appointment.findFirst({
         where: {
             professionalId: parseInt(professionalId),
-            status: { not: 'CANCELLED' }, // Ignorar las canceladas
-            AND: [
-                { startTime: { lt: end } },  // Empieza antes de que la nueva termine
-                { endTime: { gt: start } }   // Termina después de que la nueva empiece
-            ]
+            status: { not: 'CANCELLED' },
+            AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ]
         }
     });
+    if (conflict) return res.status(409).json({ error: 'Horario ocupado.' });
 
-    if (conflict) {
-        return res.status(409).json({ error: 'Lo sentimos, ese horario ya fue reservado por otra persona.' });
-    }
-    // ==========================================================
-
-    // 2. Upsert Paciente
+    // Upsert Paciente
     let p = await prisma.patient.upsert({
       where: { rut: rut },
       update: { name, email, phone, address: address || null, prevision: prevision || null, birthDate: birthDate ? new Date(birthDate) : null },
@@ -190,13 +193,13 @@ app.post('/api/appointments', async (req, res) => {
     
     let meetLink = null, googleEventId = null;
 
-    // 3. Google Calendar
+    // Google Calendar
     if (s.isTelemed || s.name.toLowerCase().includes('tele')) {
       try {
         const gRes = await calendar.events.insert({
           calendarId: 'primary', conferenceDataVersion: 1,
           requestBody: {
-            summary: `Cita CISD: ${name} - ${s.name}`, description: `Cita con ${s.name}. Paciente: ${name}, RUT: ${rut}`,
+            summary: `Cita CISD: ${name} - ${s.name}`, description: `Cita con ${s.name}. Paciente: ${name}`,
             start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() },
             conferenceData: { createRequest: { requestId: "cisd-" + Date.now(), conferenceSolutionKey: { type: "hangoutsMeet" } } },
             attendees: [{ email }]
@@ -206,7 +209,7 @@ app.post('/api/appointments', async (req, res) => {
       } catch (e) { console.error('Google Error', e); }
     }
 
-    // 4. MercadoPago
+    // MercadoPago
     let preferenceId = null;
     let paymentLink = null;
 
@@ -230,7 +233,7 @@ app.post('/api/appointments', async (req, res) => {
       } catch (mpError) { console.error("Error MP:", mpError); }
     }
 
-    // 5. Crear Cita
+    // Guardar Cita
     const appt = await prisma.appointment.create({
       data: { 
         startTime: start, endTime: end, professionalId: parseInt(professionalId), patientId: p.id, serviceId: s.id, 
@@ -243,10 +246,7 @@ app.post('/api/appointments', async (req, res) => {
 
     res.json({ ...appt, paymentLink });
 
-  } catch (error) { 
-    console.error(error); 
-    res.status(500).json({ error: 'Error creating appt' }); 
-  }
+  } catch (error) { res.status(500).json({ error: 'Error creating appt' }); }
 });
 
 app.put('/api/appointments/:id', async (req, res) => {

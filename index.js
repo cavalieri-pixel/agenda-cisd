@@ -62,19 +62,25 @@ app.get('/api/patients/search/:rut', async (req, res) => {
   }
 });
 
-// --- PÚBLICAS: SLOTS DISPONIBLES (CON AUTO-LIMPIEZA) ---
+// --- PÚBLICAS: SLOTS DISPONIBLES (CON AUTO-LIMPIEZA Y LOGS) ---
 app.get('/api/public/slots', async (req, res) => {
   const { date, professionalId, duration } = req.query; 
   try {
     // 1. AUTO-LIMPIEZA DE BASURA
-    // Borrar físicamente citas pendientes de hace más de 15 minutos
-    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
-    await prisma.appointment.deleteMany({
+    const now = new Date();
+    const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
+    
+    // Log para depuración en Render
+    console.log(`[SLOTS] Hora Servidor: ${now.toISOString()} | Borrando pendientes antes de: ${fifteenMinutesAgo.toISOString()}`);
+
+    const deleted = await prisma.appointment.deleteMany({
       where: {
         status: 'PENDING_PAYMENT',
         createdAt: { lt: fifteenMinutesAgo }
       }
     });
+    
+    if (deleted.count > 0) console.log(`[SLOTS] 🧹 Se eliminaron ${deleted.count} citas expiradas.`);
 
     const searchDate = new Date(date);
     const jsDay = searchDate.getUTCDay(); 
@@ -102,7 +108,6 @@ app.get('/api/public/slots', async (req, res) => {
     });
 
     // LÓGICA DE TIEMPO "CHILE"
-    const now = new Date();
     const chileTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Santiago" }));
     
     const [qYear, qMonth, qDay] = date.split('-').map(Number);
@@ -382,13 +387,19 @@ app.get('/api/appointments', async (req, res) => {
   const { professionalId, start, end } = req.query;
   try { 
     // 1. AUTO-LIMPIEZA DE BASURA (Citas > 15 min sin pagar)
-    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
-    await prisma.appointment.deleteMany({
+    const now = new Date();
+    const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
+    
+    console.log(`[ADMIN] Buscando citas basura anteriores a: ${fifteenMinutesAgo.toISOString()}`);
+
+    const deleted = await prisma.appointment.deleteMany({
       where: {
         status: 'PENDING_PAYMENT',
         createdAt: { lt: fifteenMinutesAgo }
       }
     });
+    
+    if (deleted.count > 0) console.log(`[ADMIN] 🧹 Se eliminaron ${deleted.count} citas basura.`);
 
     // 2. Traer lo que queda (Solo citas reales)
     const appts = await prisma.appointment.findMany({ 
@@ -418,17 +429,10 @@ app.post('/api/appointments', async (req, res) => {
   try {
     // A. BLOQUEOS
     if (type === 'BLOCK') {
-      const start = new Date(startTime); 
-      const end = new Date(endTime);
-      
-      const conflict = await prisma.appointment.findFirst({ 
-        where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] } 
-      });
+      const start = new Date(startTime); const end = new Date(endTime);
+      const conflict = await prisma.appointment.findFirst({ where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] } });
       if (conflict) return res.status(409).json({ error: 'Conflicto de horario' });
-      
-      const block = await prisma.appointment.create({ 
-        data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), status: 'BLOCKED', title: title || 'Bloqueo' } 
-      });
+      const block = await prisma.appointment.create({ data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), status: 'BLOCKED', title: title || 'Bloqueo' } });
       return res.json(block);
     }
 
@@ -461,7 +465,6 @@ app.post('/api/appointments', async (req, res) => {
       data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), patientId: p.id, serviceId: s.id, price: s.price, paymentStatus: 'PENDING', status: initialStatus }
     });
 
-    // Google Meet
     let meetLink = null;
     if (s.isTelemed || s.name.toLowerCase().includes('tele')) {
        try {
@@ -474,7 +477,6 @@ app.post('/api/appointments', async (req, res) => {
       } catch {}
     }
 
-    // MercadoPago Preference
     let paymentLink = null;
     if (s.price > 0 && client) {
       try {
@@ -495,10 +497,7 @@ app.post('/api/appointments', async (req, res) => {
     }
 
     res.json({ ...appt, paymentLink });
-  } catch (error) { 
-    console.error(error); 
-    res.status(500).json({ error: 'Error creating appt' }); 
-  }
+  } catch (error) { console.error(error); res.status(500).json({ error: 'Error creating appt' }); }
 });
 
 // --- WEBHOOK MERCADOPAGO ---
@@ -522,10 +521,7 @@ app.post('/api/webhook/mercadopago', async (req, res) => {
       }
     }
     res.sendStatus(200);
-  } catch (error) { 
-    console.error('Webhook Error:', error); 
-    res.sendStatus(500); 
-  }
+  } catch (error) { console.error('Webhook Error:', error); res.sendStatus(500); }
 });
 
 // --- ACTUALIZAR CITA ---
@@ -535,7 +531,6 @@ app.put('/api/appointments/:id', async (req, res) => {
   try {
     const appointment = await prisma.appointment.findUnique({ where: { id: parseInt(id) }, include: { service: true } });
     if (!appointment) return res.status(404).json({ error: 'Not found' });
-    
     const dataToUpdate = {};
     if (newStartTime) {
       const newStart = new Date(newStartTime);
@@ -552,12 +547,9 @@ app.put('/api/appointments/:id', async (req, res) => {
     if (clinicalNote !== undefined) dataToUpdate.clinicalNote = clinicalNote;
     if (paymentStatus) dataToUpdate.paymentStatus = paymentStatus;
     if (paymentMethod) dataToUpdate.paymentMethod = paymentMethod;
-    
     const updated = await prisma.appointment.update({ where: { id: parseInt(id) }, data: dataToUpdate });
     res.json(updated);
-  } catch { 
-    res.status(500).json({ error: 'Error update' }); 
-  }
+  } catch { res.status(500).json({ error: 'Error update' }); }
 });
 
 // --- ELIMINAR CITA ---
@@ -565,16 +557,10 @@ app.delete('/api/appointments/:id', async (req, res) => {
   const { id } = req.params;
   try {
     const appt = await prisma.appointment.findUnique({ where: { id: parseInt(id) } });
-    if (appt && appt.googleEventId) { 
-      try { 
-        await calendar.events.delete({ calendarId: 'primary', eventId: appt.googleEventId }); 
-      } catch {} 
-    }
+    if (appt && appt.googleEventId) { try { await calendar.events.delete({ calendarId: 'primary', eventId: appt.googleEventId }); } catch {} }
     await prisma.appointment.delete({ where: { id: parseInt(id) } });
     res.json({ message: 'Deleted' });
-  } catch { 
-    res.status(500).json({ error: 'Error delete' }); 
-  }
+  } catch { res.status(500).json({ error: 'Error delete' }); }
 });
 
 app.listen(port, () => { console.log(`🚀 CISD Ready on port ${port}`); });

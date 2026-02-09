@@ -3,6 +3,7 @@ import axios from 'axios';
 
 const API_URL = 'https://cisd-api.onrender.com/api';
 
+// --- UTILIDADES (RUT, FORMATOS) ---
 const validarRut = (rut) => {
   if (!rut || rut.trim().length < 3) return false;
   const cleanRut = rut.replace(/[^0-9kK]/g, "");
@@ -28,16 +29,33 @@ const formatRut = (rut) => {
   return body.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + "-" + dv;
 };
 
+// Generar los próximos N días
+const getNextDays = (days = 15) => {
+  const dates = [];
+  const today = new Date();
+  for (let i = 0; i < days; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    dates.push(d);
+  }
+  return dates;
+};
+
+// Formateadores de fecha para el calendario
+const getDayName = (date) => new Intl.DateTimeFormat('es-CL', { weekday: 'short' }).format(date); // lun
+const getDayNumber = (date) => new Intl.DateTimeFormat('es-CL', { day: 'numeric' }).format(date); // 9
+const getMonthName = (date) => new Intl.DateTimeFormat('es-CL', { month: 'short' }).format(date); // feb
+
 export default function BookingWizard() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
 
-  // DATOS SISTEMA
+  // DATA SISTEMA
   const [services, setServices] = useState([]);
   const [professionals, setProfessionals] = useState([]);
   const [proSlots, setProSlots] = useState({});
 
-  // DATOS USUARIO
+  // DATA USUARIO
   const [rut, setRut] = useState('');
   const [docType, setDocType] = useState('Carnet de Identidad');
   const [passport, setPassport] = useState('');
@@ -47,36 +65,36 @@ export default function BookingWizard() {
     address: '', prevision: 'Fonasa', birthDate: ''
   });
 
-  // SELECCIÓN CITA
+  // SELECCIÓN
   const [selectedService, setSelectedService] = useState(null);
   const [selectedPro, setSelectedPro] = useState(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedTime, setSelectedTime] = useState(null);
+  
+  // Calendario UI
+  const [calendarDays, setCalendarDays] = useState([]);
 
   useEffect(() => {
     axios.get(`${API_URL}/services`).then(res => setServices(res.data));
     axios.get(`${API_URL}/professionals`).then(res => setProfessionals(res.data));
+    setCalendarDays(getNextDays(14)); // Generar 2 semanas
   }, []);
 
-  // --- LOGICA PASO 1: VALIDACION Y BUSQUEDA ---
+  // --- LOGICA PASO 1 ---
   const handleNextStep1 = async () => {
     let finalRut = '';
-
     if (docType === 'Carnet de Identidad') {
       if (!validarRut(rut)) return alert("El RUT ingresado no es válido.");
       finalRut = formatRut(rut);
     } else {
-      if (passport.length < 5) return alert("Ingrese un número de pasaporte válido.");
+      if (passport.length < 5) return alert("Ingrese un pasaporte válido.");
       finalRut = passport;
     }
 
     setLoading(true);
-    
-    // INTENTAR BUSCAR PACIENTE
     try {
       const res = await axios.get(`${API_URL}/patients/search/${finalRut}`);
       if (res.data) {
-        // PACIENTE ENCONTRADO -> LLENAR DATOS Y SALTAR A PASO 3
         setPatientData({
           ...patientData,
           rut: res.data.rut,
@@ -88,11 +106,10 @@ export default function BookingWizard() {
           prevision: res.data.prevision || 'Fonasa',
           birthDate: res.data.birthDate ? res.data.birthDate.split('T')[0] : ''
         });
-        alert(`¡Bienvenido de nuevo, ${res.data.name}!`);
-        setStep(3); // SALTO MAGICO A SELECCIONAR SERVICIO
+        alert(`¡Hola de nuevo ${res.data.name}!`);
+        setStep(3); 
       }
     } catch (error) {
-      // NO ENCONTRADO O ERROR -> PASO 2 (REGISTRO)
       setPatientData({ ...patientData, rut: finalRut });
       setStep(2);
     } finally {
@@ -100,7 +117,7 @@ export default function BookingWizard() {
     }
   };
 
-  // --- LOGICA PASO 4 ---
+  // --- LOGICA PASO 4 (CARGAR HORAS) ---
   useEffect(() => {
     if (step === 4 && selectedService) {
       loadAllSlots(selectedDate);
@@ -116,16 +133,14 @@ export default function BookingWizard() {
           params: { date: dateStr, professionalId: pro.id, duration: selectedService?.durationMin || 30 }
         });
         newSlots[pro.id] = res.data;
-      } catch (e) {
-        newSlots[pro.id] = [];
-      }
+      } catch (e) { newSlots[pro.id] = []; }
     });
     await Promise.all(promises);
     setProSlots(newSlots);
     setLoading(false);
   };
 
-  // --- LOGICA PASO 5: PAGO ---
+  // --- LOGICA PASO 5 (PAGO) ---
   const handleFinalBooking = async () => {
     setLoading(true);
     try {
@@ -157,7 +172,7 @@ export default function BookingWizard() {
     }
   };
 
-  // --- UI ---
+  // --- COMPONENTES UI ---
   const Header = () => (
     <header className="bg-white shadow-sm py-4 px-6 flex justify-between items-center sticky top-0 z-50">
       <div className="flex items-center gap-2">
@@ -172,15 +187,13 @@ export default function BookingWizard() {
     <div className="flex justify-between items-center mb-8 px-2 md:px-10 relative">
       <div className="absolute top-1/2 left-0 w-full h-1 bg-gray-200 -z-10"></div>
       {[1, 2, 3, 4, 5].map(n => (
-        <div key={n} className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-colors ${step >= n ? 'bg-teal-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
-          {n}
-        </div>
+        <div key={n} className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-colors ${step >= n ? 'bg-teal-600 text-white' : 'bg-gray-200 text-gray-500'}`}>{n}</div>
       ))}
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans">
+    <div className="min-h-screen bg-gray-50 font-sans text-gray-800">
       <Header />
       <main className="max-w-4xl mx-auto py-8 px-4">
         
@@ -188,40 +201,38 @@ export default function BookingWizard() {
           <h2 className="text-2xl font-bold text-teal-800 mb-2 text-center">Reserva de Hora</h2>
           <ProgressBar />
 
+          {/* PASO 1 */}
           {step === 1 && (
             <div className="max-w-md mx-auto animate-fade-in">
-              <h3 className="text-lg font-bold text-teal-700 mb-4 border-b pb-2">1. Identificación del Paciente</h3>
-              <label className="block text-xs font-bold text-gray-600 mb-1">Documento</label>
+              <h3 className="text-lg font-bold text-teal-700 mb-4 border-b pb-2">1. Identificación</h3>
               <select className="w-full p-3 border rounded mb-4" value={docType} onChange={e => setDocType(e.target.value)}><option>Carnet de Identidad</option><option>Pasaporte</option></select>
               {docType === 'Carnet de Identidad' ? (
-                <><label className="block text-xs font-bold text-red-600 mb-1">RUT</label><input className="w-full p-3 border border-red-200 rounded" placeholder="12.345.678-9" value={rut} onChange={e => setRut(e.target.value)} /><p className="text-xs text-gray-400 mt-1">Sin puntos ni guión.</p></>
+                <><label className="text-xs font-bold text-red-600">RUT</label><input className="w-full p-3 border border-red-200 rounded" placeholder="12.345.678-9" value={rut} onChange={e => setRut(e.target.value)} /></>
               ) : (
-                <><label className="block text-xs font-bold text-teal-600 mb-1">Pasaporte</label><input className="w-full p-3 border rounded" placeholder="Número" value={passport} onChange={e => setPassport(e.target.value)} /></>
+                <><label className="text-xs font-bold text-teal-600">Pasaporte</label><input className="w-full p-3 border rounded" placeholder="Número" value={passport} onChange={e => setPassport(e.target.value)} /></>
               )}
-              <button onClick={handleNextStep1} disabled={loading} className="w-full mt-6 bg-teal-600 text-white py-3 rounded font-bold hover:bg-teal-700">{loading ? 'Verificando...' : 'CONTINUAR'}</button>
+              <button onClick={handleNextStep1} disabled={loading} className="w-full mt-6 bg-teal-600 text-white py-3 rounded font-bold hover:bg-teal-700">{loading ? '...' : 'CONTINUAR'}</button>
             </div>
           )}
 
+          {/* PASO 2 */}
           {step === 2 && (
             <div className="max-w-2xl mx-auto animate-fade-in">
               <h3 className="text-lg font-bold text-teal-700 mb-4 border-b pb-2">2. Datos Personales</h3>
               <div className="grid md:grid-cols-2 gap-4">
-                <div><label className="text-xs font-bold text-gray-600">RUT/ID</label><input className="w-full p-2 border rounded bg-gray-100" value={patientData.rut || rut || passport} disabled /></div>
-                <div><label className="text-xs font-bold text-gray-600">Fecha Nacimiento</label><input type="date" className="w-full p-2 border rounded" value={patientData.birthDate} onChange={e => setPatientData({...patientData, birthDate: e.target.value})} /></div>
-                <div><label className="text-xs font-bold text-gray-600">Nombre</label><input className="w-full p-2 border rounded" value={patientData.name} onChange={e => setPatientData({...patientData, name: e.target.value})} /></div>
-                <div><label className="text-xs font-bold text-gray-600">Apellido</label><input className="w-full p-2 border rounded" value={patientData.surname} onChange={e => setPatientData({...patientData, surname: e.target.value})} /></div>
-                <div><label className="text-xs font-bold text-gray-600">Email</label><input type="email" className="w-full p-2 border rounded" value={patientData.email} onChange={e => setPatientData({...patientData, email: e.target.value})} /></div>
-                <div><label className="text-xs font-bold text-gray-600">Teléfono</label><input className="w-full p-2 border rounded" value={patientData.phone} onChange={e => setPatientData({...patientData, phone: e.target.value})} placeholder="+569..." /></div>
-                <div><label className="text-xs font-bold text-gray-600">Previsión</label><select className="w-full p-2 border rounded" value={patientData.prevision} onChange={e => setPatientData({...patientData, prevision: e.target.value})}><option>Fonasa</option><option>Isapre</option><option>Particular</option></select></div>
-                <div><label className="text-xs font-bold text-gray-600">Dirección</label><input className="w-full p-2 border rounded" value={patientData.address} onChange={e => setPatientData({...patientData, address: e.target.value})} /></div>
+                <div><label className="text-xs font-bold">RUT/ID</label><input className="w-full p-2 border rounded bg-gray-100" value={patientData.rut || rut || passport} disabled /></div>
+                <div><label className="text-xs font-bold">Fecha Nacimiento</label><input type="date" className="w-full p-2 border rounded" value={patientData.birthDate} onChange={e => setPatientData({...patientData, birthDate: e.target.value})} /></div>
+                <div><label className="text-xs font-bold">Nombre</label><input className="w-full p-2 border rounded" value={patientData.name} onChange={e => setPatientData({...patientData, name: e.target.value})} /></div>
+                <div><label className="text-xs font-bold">Apellido</label><input className="w-full p-2 border rounded" value={patientData.surname} onChange={e => setPatientData({...patientData, surname: e.target.value})} /></div>
+                <div><label className="text-xs font-bold">Email</label><input className="w-full p-2 border rounded" value={patientData.email} onChange={e => setPatientData({...patientData, email: e.target.value})} /></div>
+                <div><label className="text-xs font-bold">Teléfono</label><input className="w-full p-2 border rounded" value={patientData.phone} onChange={e => setPatientData({...patientData, phone: e.target.value})} /></div>
+                <div><label className="text-xs font-bold">Previsión</label><select className="w-full p-2 border rounded" value={patientData.prevision} onChange={e => setPatientData({...patientData, prevision: e.target.value})}><option>Fonasa</option><option>Isapre</option><option>Particular</option></select></div>
               </div>
-              <div className="flex gap-3 mt-6">
-                <button onClick={() => setStep(1)} className="px-4 py-2 border rounded text-gray-600">Volver</button>
-                <button onClick={() => (patientData.name && patientData.email && patientData.phone) ? setStep(3) : alert("Datos obligatorios faltantes")} className="flex-1 bg-teal-600 text-white py-2 rounded font-bold hover:bg-teal-700">GUARDAR Y CONTINUAR</button>
-              </div>
+              <button onClick={() => (patientData.name && patientData.email) ? setStep(3) : alert("Complete datos")} className="w-full mt-6 bg-teal-600 text-white py-3 rounded font-bold">GUARDAR Y CONTINUAR</button>
             </div>
           )}
 
+          {/* PASO 3 */}
           {step === 3 && (
             <div className="animate-fade-in">
               <h3 className="text-lg font-bold text-teal-700 mb-4 border-b pb-2">3. Selección de Especialidad</h3>
@@ -236,40 +247,108 @@ export default function BookingWizard() {
             </div>
           )}
 
+          {/* --- PASO 4 MEJORADO: CALENDARIO HORIZONTAL --- */}
           {step === 4 && (
             <div className="animate-fade-in">
-              <h3 className="text-lg font-bold text-teal-700 mb-4 border-b pb-2">4. Profesional y Hora</h3>
-              <div className="flex justify-center mb-6"><input type="date" className="p-2 border rounded shadow-sm text-teal-800 font-bold" value={selectedDate} min={new Date().toISOString().split('T')[0]} onChange={e => setSelectedDate(e.target.value)} /></div>
-              {loading ? <div className="text-center py-10">Cargando...</div> : <div className="space-y-4">
+              <h3 className="text-lg font-bold text-teal-700 mb-2 border-b pb-2">4. Seleccionar día y hora</h3>
+              <p className="text-sm text-gray-500 mb-4">Servicio: <strong>{selectedService?.name}</strong></p>
+
+              {/* CALENDARIO ESTILO REDSALUD */}
+              <div className="flex overflow-x-auto gap-2 pb-4 mb-6 scrollbar-hide">
+                {calendarDays.map((date, idx) => {
+                  const dateStr = date.toISOString().split('T')[0];
+                  const isSelected = selectedDate === dateStr;
+                  const dayName = getDayName(date); // lun
+                  const dayNum = getDayNumber(date); // 9
+                  const monthName = getMonthName(date); // feb
+
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedDate(dateStr)}
+                      className={`
+                        min-w-[80px] p-2 rounded-lg border transition flex flex-col items-center justify-center
+                        ${isSelected ? 'border-teal-600 bg-teal-50 ring-2 ring-teal-100' : 'border-gray-200 bg-white hover:border-teal-300'}
+                      `}
+                    >
+                      <span className="text-xs uppercase text-gray-500 font-bold">{monthName}</span>
+                      <span className={`text-2xl font-bold ${isSelected ? 'text-teal-700' : 'text-gray-700'}`}>{dayNum}</span>
+                      <span className="text-xs capitalize text-gray-500">{dayName}</span>
+                      
+                      {/* Indicador visual simple de selección */}
+                      {isSelected && <div className="mt-1 w-2 h-2 bg-teal-600 rounded-full"></div>}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {loading ? (
+                <div className="text-center py-10"><div className="inline-block w-8 h-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin"></div></div>
+              ) : (
+                <div className="space-y-4">
                   {professionals.map(pro => {
                     const slots = proSlots[pro.id] || [];
-                    if (slots.length === 0) return null;
+                    // Si no tiene horas, no lo mostramos (o podríamos mostrarlo deshabilitado)
+                    if (slots.length === 0) return null; 
+
                     return (
-                      <div key={pro.id} className="border rounded-xl p-4 hover:shadow-md transition bg-white">
-                        <div className="flex items-center gap-4 mb-3 border-b pb-2"><div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center text-teal-700 font-bold text-xl">{pro.name.charAt(0)}</div><div><p className="font-bold text-gray-800">{pro.name}</p><p className="text-xs text-gray-500 uppercase">Especialista CISD</p></div></div>
-                        <div className="flex flex-wrap gap-2">{slots.slice(0, 8).map(time => (<button key={time} onClick={() => { setSelectedPro(pro); setSelectedTime(time); setStep(5); }} className="px-4 py-2 bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-600 hover:text-white transition font-bold text-sm">{time}</button>))}</div>
+                      <div key={pro.id} className="border rounded-xl p-4 hover:shadow-md transition bg-white animate-fade-in-up">
+                        <div className="flex items-center gap-4 mb-3 border-b pb-2">
+                          <div className="w-14 h-14 bg-teal-100 rounded-full flex items-center justify-center text-teal-700 font-bold text-xl border-2 border-white shadow-sm">
+                            {pro.name.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="font-bold text-gray-800 text-lg">{pro.name}</p>
+                            <p className="text-xs text-teal-600 uppercase font-bold tracking-wide">Especialista CISD</p>
+                          </div>
+                        </div>
+                        
+                        <div className="bg-gray-50 p-3 rounded-lg">
+                          <p className="text-xs font-bold text-gray-400 mb-2 uppercase">Horas Disponibles</p>
+                          <div className="flex flex-wrap gap-2">
+                            {slots.slice(0, 10).map(time => (
+                              <button
+                                key={time}
+                                onClick={() => { setSelectedPro(pro); setSelectedTime(time); setStep(5); }}
+                                className="px-4 py-2 bg-white text-teal-700 border border-teal-200 rounded-lg hover:bg-teal-600 hover:text-white transition font-bold text-sm shadow-sm"
+                              >
+                                {time}
+                              </button>
+                            ))}
+                            {slots.length > 10 && <span className="text-xs text-gray-400 self-center pl-2">y más...</span>}
+                          </div>
+                        </div>
                       </div>
                     );
                   })}
-                  {Object.values(proSlots).every(s => s.length === 0) && <div className="text-center py-10 bg-gray-50 rounded border border-dashed text-gray-500">Sin horas disponibles hoy.</div>}
+                  
+                  {/* Mensaje si no hay ningún médico con horas */}
+                  {Object.values(proSlots).every(s => s.length === 0) && (
+                    <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                      <p className="text-4xl mb-2">📅</p>
+                      <p className="text-gray-500 font-bold">No hay horas disponibles para este día.</p>
+                      <p className="text-sm text-gray-400">Intenta seleccionar otra fecha en el calendario de arriba.</p>
+                    </div>
+                  )}
                 </div>
-              }
-              <button onClick={() => setStep(3)} className="mt-6 text-teal-600 font-bold text-sm">{'< VOLVER'}</button>
+              )}
+              <button onClick={() => setStep(3)} className="mt-6 text-teal-600 font-bold text-sm hover:underline">{'< VOLVER A ESPECIALIDADES'}</button>
             </div>
           )}
 
+          {/* PASO 5 */}
           {step === 5 && (
             <div className="animate-fade-in max-w-lg mx-auto">
               <h3 className="text-lg font-bold text-teal-700 mb-4 border-b pb-2 text-center">5. Resumen y Pago</h3>
-              <div className="bg-gray-50 p-6 rounded-xl border mb-6">
-                <div className="flex justify-between items-center mb-2"><span className="font-bold text-gray-700">Paciente:</span><span>{patientData.name} {patientData.surname}</span></div>
-                <div className="flex justify-between items-center mb-2"><span className="font-bold text-gray-700">Profesional:</span><span>{selectedPro?.name}</span></div>
-                <div className="flex justify-between items-center mb-2"><span className="font-bold text-gray-700">Servicio:</span><span>{selectedService?.name}</span></div>
-                <div className="flex justify-between items-center mb-4 border-b pb-4"><span className="font-bold text-gray-700">Fecha:</span><span>{selectedDate} a las {selectedTime}</span></div>
-                <div className="flex justify-between items-center text-xl font-bold text-teal-800"><span>Total:</span><span>${selectedService?.price?.toLocaleString('es-CL') || 0}</span></div>
+              <div className="bg-white border-2 border-teal-50 rounded-xl p-6 mb-6 shadow-sm">
+                <div className="flex justify-between border-b pb-2 mb-2"><span className="text-gray-500">Paciente</span><span className="font-bold">{patientData.name} {patientData.surname}</span></div>
+                <div className="flex justify-between border-b pb-2 mb-2"><span className="text-gray-500">Profesional</span><span className="font-bold">{selectedPro?.name}</span></div>
+                <div className="flex justify-between border-b pb-2 mb-2"><span className="text-gray-500">Servicio</span><span className="font-bold">{selectedService?.name}</span></div>
+                <div className="flex justify-between border-b pb-2 mb-2"><span className="text-gray-500">Fecha</span><span className="font-bold text-teal-700">{selectedDate} / {selectedTime}</span></div>
+                <div className="flex justify-between items-center text-xl font-bold text-teal-800 mt-4"><span>Total:</span><span>${selectedService?.price?.toLocaleString('es-CL') || 0}</span></div>
               </div>
               <button onClick={handleFinalBooking} disabled={loading} className="w-full bg-teal-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-teal-700 shadow-lg disabled:opacity-50">{loading ? 'PROCESANDO...' : 'IR A PAGAR'}</button>
-              <button onClick={() => setStep(4)} className="w-full mt-4 text-gray-500 text-sm hover:underline">Volver</button>
+              <button onClick={() => setStep(4)} className="w-full mt-4 text-gray-400 text-sm hover:text-gray-600">Volver</button>
             </div>
           )}
 

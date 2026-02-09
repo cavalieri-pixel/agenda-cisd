@@ -3,7 +3,7 @@ import axios from 'axios';
 
 const API_URL = 'https://cisd-api.onrender.com/api';
 
-// --- UTILIDADES (RUT, FORMATOS) ---
+// --- UTILIDADES ---
 const validarRut = (rut) => {
   if (!rut || rut.trim().length < 3) return false;
   const cleanRut = rut.replace(/[^0-9kK]/g, "");
@@ -29,7 +29,6 @@ const formatRut = (rut) => {
   return body.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + "-" + dv;
 };
 
-// Generar los próximos N días
 const getNextDays = (days = 15) => {
   const dates = [];
   const today = new Date();
@@ -41,21 +40,20 @@ const getNextDays = (days = 15) => {
   return dates;
 };
 
-// Formateadores de fecha para el calendario
-const getDayName = (date) => new Intl.DateTimeFormat('es-CL', { weekday: 'short' }).format(date); // lun
-const getDayNumber = (date) => new Intl.DateTimeFormat('es-CL', { day: 'numeric' }).format(date); // 9
-const getMonthName = (date) => new Intl.DateTimeFormat('es-CL', { month: 'short' }).format(date); // feb
+const getDayName = (date) => new Intl.DateTimeFormat('es-CL', { weekday: 'short' }).format(date);
+const getDayNumber = (date) => new Intl.DateTimeFormat('es-CL', { day: 'numeric' }).format(date);
+const getMonthName = (date) => new Intl.DateTimeFormat('es-CL', { month: 'short' }).format(date);
 
 export default function BookingWizard() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
 
-  // DATA SISTEMA
+  // DATA
   const [services, setServices] = useState([]);
   const [professionals, setProfessionals] = useState([]);
   const [proSlots, setProSlots] = useState({});
 
-  // DATA USUARIO
+  // USER
   const [rut, setRut] = useState('');
   const [docType, setDocType] = useState('Carnet de Identidad');
   const [passport, setPassport] = useState('');
@@ -70,17 +68,15 @@ export default function BookingWizard() {
   const [selectedPro, setSelectedPro] = useState(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedTime, setSelectedTime] = useState(null);
-  
-  // Calendario UI
   const [calendarDays, setCalendarDays] = useState([]);
 
   useEffect(() => {
     axios.get(`${API_URL}/services`).then(res => setServices(res.data));
     axios.get(`${API_URL}/professionals`).then(res => setProfessionals(res.data));
-    setCalendarDays(getNextDays(14)); // Generar 2 semanas
+    setCalendarDays(getNextDays(14));
   }, []);
 
-  // --- LOGICA PASO 1 ---
+  // PASO 1
   const handleNextStep1 = async () => {
     let finalRut = '';
     if (docType === 'Carnet de Identidad') {
@@ -117,7 +113,7 @@ export default function BookingWizard() {
     }
   };
 
-  // --- LOGICA PASO 4 (CARGAR HORAS) ---
+  // PASO 4 (CARGAR)
   useEffect(() => {
     if (step === 4 && selectedService) {
       loadAllSlots(selectedDate);
@@ -140,7 +136,7 @@ export default function BookingWizard() {
     setLoading(false);
   };
 
-  // --- LOGICA PASO 5 (PAGO) ---
+  // PASO 5 (PAGO)
   const handleFinalBooking = async () => {
     setLoading(true);
     try {
@@ -172,7 +168,7 @@ export default function BookingWizard() {
     }
   };
 
-  // --- COMPONENTES UI ---
+  // UI COMPONENTS
   const Header = () => (
     <header className="bg-white shadow-sm py-4 px-6 flex justify-between items-center sticky top-0 z-50">
       <div className="flex items-center gap-2">
@@ -247,92 +243,53 @@ export default function BookingWizard() {
             </div>
           )}
 
-          {/* --- PASO 4 MEJORADO: CALENDARIO HORIZONTAL --- */}
+          {/* PASO 4 */}
           {step === 4 && (
             <div className="animate-fade-in">
               <h3 className="text-lg font-bold text-teal-700 mb-2 border-b pb-2">4. Seleccionar día y hora</h3>
               <p className="text-sm text-gray-500 mb-4">Servicio: <strong>{selectedService?.name}</strong></p>
 
-              {/* CALENDARIO ESTILO REDSALUD */}
               <div className="flex overflow-x-auto gap-2 pb-4 mb-6 scrollbar-hide">
                 {calendarDays.map((date, idx) => {
                   const dateStr = date.toISOString().split('T')[0];
                   const isSelected = selectedDate === dateStr;
-                  const dayName = getDayName(date); // lun
-                  const dayNum = getDayNumber(date); // 9
-                  const monthName = getMonthName(date); // feb
-
+                  const dayName = getDayName(date);
+                  const dayNum = getDayNumber(date);
+                  const monthName = getMonthName(date);
                   return (
-                    <button
-                      key={idx}
-                      onClick={() => setSelectedDate(dateStr)}
-                      className={`
-                        min-w-[80px] p-2 rounded-lg border transition flex flex-col items-center justify-center
-                        ${isSelected ? 'border-teal-600 bg-teal-50 ring-2 ring-teal-100' : 'border-gray-200 bg-white hover:border-teal-300'}
-                      `}
-                    >
-                      <span className="text-xs uppercase text-gray-500 font-bold">{monthName}</span>
-                      <span className={`text-2xl font-bold ${isSelected ? 'text-teal-700' : 'text-gray-700'}`}>{dayNum}</span>
-                      <span className="text-xs capitalize text-gray-500">{dayName}</span>
-                      
-                      {/* Indicador visual simple de selección */}
+                    <button key={idx} onClick={() => setSelectedDate(dateStr)} className={`min-w-[80px] p-2 rounded-lg border transition flex flex-col items-center justify-center ${isSelected ? 'border-teal-600 bg-teal-50 ring-2 ring-teal-100' : 'border-gray-200 bg-white hover:border-teal-300'}`}>
+                      <span className="text-xs uppercase text-gray-500 font-bold">{monthName}</span><span className={`text-2xl font-bold ${isSelected ? 'text-teal-700' : 'text-gray-700'}`}>{dayNum}</span><span className="text-xs capitalize text-gray-500">{dayName}</span>
                       {isSelected && <div className="mt-1 w-2 h-2 bg-teal-600 rounded-full"></div>}
                     </button>
                   );
                 })}
               </div>
 
-              {loading ? (
-                <div className="text-center py-10"><div className="inline-block w-8 h-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin"></div></div>
-              ) : (
-                <div className="space-y-4">
+              {loading ? <div className="text-center py-10">Cargando...</div> : <div className="space-y-4">
                   {professionals.map(pro => {
                     const slots = proSlots[pro.id] || [];
-                    // Si no tiene horas, no lo mostramos (o podríamos mostrarlo deshabilitado)
-                    if (slots.length === 0) return null; 
-
+                    if (slots.length === 0) return null;
                     return (
                       <div key={pro.id} className="border rounded-xl p-4 hover:shadow-md transition bg-white animate-fade-in-up">
                         <div className="flex items-center gap-4 mb-3 border-b pb-2">
-                          <div className="w-14 h-14 bg-teal-100 rounded-full flex items-center justify-center text-teal-700 font-bold text-xl border-2 border-white shadow-sm">
-                            {pro.name.charAt(0)}
-                          </div>
-                          <div>
-                            <p className="font-bold text-gray-800 text-lg">{pro.name}</p>
-                            <p className="text-xs text-teal-600 uppercase font-bold tracking-wide">Especialista CISD</p>
-                          </div>
+                          <div className="w-14 h-14 bg-teal-100 rounded-full flex items-center justify-center text-teal-700 font-bold text-xl border-2 border-white shadow-sm">{pro.name.charAt(0)}</div>
+                          <div><p className="font-bold text-gray-800 text-lg">{pro.name}</p><p className="text-xs text-teal-600 uppercase font-bold tracking-wide">Especialista CISD</p></div>
                         </div>
-                        
                         <div className="bg-gray-50 p-3 rounded-lg">
                           <p className="text-xs font-bold text-gray-400 mb-2 uppercase">Horas Disponibles</p>
                           <div className="flex flex-wrap gap-2">
-                            {slots.slice(0, 10).map(time => (
-                              <button
-                                key={time}
-                                onClick={() => { setSelectedPro(pro); setSelectedTime(time); setStep(5); }}
-                                className="px-4 py-2 bg-white text-teal-700 border border-teal-200 rounded-lg hover:bg-teal-600 hover:text-white transition font-bold text-sm shadow-sm"
-                              >
-                                {time}
-                              </button>
+                            {slots.map(time => (
+                              <button key={time} onClick={() => { setSelectedPro(pro); setSelectedTime(time); setStep(5); }} className="px-4 py-2 bg-white text-teal-700 border border-teal-200 rounded-lg hover:bg-teal-600 hover:text-white transition font-bold text-sm shadow-sm">{time}</button>
                             ))}
-                            {slots.length > 10 && <span className="text-xs text-gray-400 self-center pl-2">y más...</span>}
                           </div>
                         </div>
                       </div>
                     );
                   })}
-                  
-                  {/* Mensaje si no hay ningún médico con horas */}
-                  {Object.values(proSlots).every(s => s.length === 0) && (
-                    <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
-                      <p className="text-4xl mb-2">📅</p>
-                      <p className="text-gray-500 font-bold">No hay horas disponibles para este día.</p>
-                      <p className="text-sm text-gray-400">Intenta seleccionar otra fecha en el calendario de arriba.</p>
-                    </div>
-                  )}
+                  {Object.values(proSlots).every(s => s.length === 0) && <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed text-gray-400">No hay horas disponibles.</div>}
                 </div>
-              )}
-              <button onClick={() => setStep(3)} className="mt-6 text-teal-600 font-bold text-sm hover:underline">{'< VOLVER A ESPECIALIDADES'}</button>
+              }
+              <button onClick={() => setStep(3)} className="mt-6 text-teal-600 font-bold text-sm">{'< VOLVER'}</button>
             </div>
           )}
 

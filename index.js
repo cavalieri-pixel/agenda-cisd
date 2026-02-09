@@ -400,14 +400,19 @@ app.post('/api/services/import', async (req, res) => {
   res.json({ message: `Procesados: ${c}` }); 
 });
 
+// ==========================================
+//   ACTUALIZACIÓN AQUÍ: EXPORTAR DURACIÓN
+// ==========================================
 app.get('/api/services/export', async (req, res) => { 
   const s = await prisma.service.findMany(); 
-  let csv='categoria,especialidad,nombre,codigo,precio,valor_descuento,descripcion\n'; 
+  // Se agrego "duracion" al header
+  let csv='categoria,especialidad,nombre,codigo,precio,valor_descuento,duracion,descripcion\n'; 
   s.forEach(x => { 
     const desc = x.description ? x.description.replace(/"/g, '""') : ''; 
     const p = '$' + x.price; 
     const d = x.discountValue > 0 ? '$' + x.discountValue : '0'; 
-    csv += `"${x.category||''}","${x.specialty||''}","${x.name}","${x.code}","${p}","${d}","${desc}"\n`; 
+    // Se agrego x.durationMin a la fila
+    csv += `"${x.category||''}","${x.specialty||''}","${x.name}","${x.code}","${p}","${d}",${x.durationMin},"${desc}"\n`; 
   }); 
   res.header('Content-Type','text/csv').attachment('servicios.csv').send(csv); 
 });

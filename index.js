@@ -93,19 +93,14 @@ app.get('/api/public/slots', async (req, res) => {
 
     // --- LÓGICA DE TIEMPO "CHILE" ---
     const now = new Date();
-    // Forzamos la zona horaria a Santiago de Chile
     const chileTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Santiago" }));
     
     const [qYear, qMonth, qDay] = date.split('-').map(Number);
-    
-    // Verificamos si la fecha consultada es HOY en Chile
     const isToday = (
         chileTime.getFullYear() === qYear &&
         chileTime.getMonth() === (qMonth - 1) &&
         chileTime.getDate() === qDay
     );
-    
-    // Convertimos hora actual Chile a minutos del día
     const currentChileMins = chileTime.getHours() * 60 + chileTime.getMinutes();
     // --------------------------------
 
@@ -125,28 +120,23 @@ app.get('/api/public/slots', async (req, res) => {
       const sStart = currentMins; 
       const sEnd = currentMins + serviceDuration;
       
-      // 1. FILTRO DE PASADO (CHILE): 
-      // Si es hoy y el bloque empieza antes de "ahora + 30 min", lo saltamos.
+      // 1. FILTRO PASADO
       if (isToday && sStart < currentChileMins + 30) {
         currentMins += interval;
         continue; 
       }
       
-      // 2. FILTRO DE OCUPACIÓN
+      // 2. FILTRO OCUPACIÓN
       const isBusy = existingAppointments.some(appt => {
         const aStart = appt.startTime.getUTCHours() * 60 + appt.startTime.getUTCMinutes();
         const aEnd = appt.endTime.getUTCHours() * 60 + appt.endTime.getUTCMinutes();
-        
         const overlap = (sStart < aEnd && sEnd > aStart);
         if (!overlap) return false;
 
-        // Reglas de estado
         if (appt.status === 'CONFIRMED' || appt.status === 'BLOCKED') return true;
-        
-        // Regla 15 minutos para pendientes
         if (appt.status === 'PENDING_PAYMENT') {
-          const minutesSinceCreation = (new Date() - new Date(appt.createdAt)) / 60000;
-          return minutesSinceCreation < 15; 
+          const mins = (new Date() - new Date(appt.createdAt)) / 60000;
+          return mins < 15; 
         }
         return false;
       });
@@ -385,14 +375,36 @@ app.post('/api/availability', async (req, res) => {
 // ==========================================
 //           CITAS Y AGENDAMIENTO
 // ==========================================
+
+// --- LEER CITAS (PARA ADMIN) ---
+// AQUÍ ESTÁ EL CAMBIO: Filtramos las pendientes viejas para que no aparezcan en la agenda
 app.get('/api/appointments', async (req, res) => {
   const { professionalId, start, end } = req.query;
   try { 
+    // 1. Traemos todas las citas que NO estén canceladas explícitamente
     const appts = await prisma.appointment.findMany({ 
-      where: { professionalId: parseInt(professionalId), startTime: { gte: new Date(start) }, endTime: { lte: new Date(end) } }, 
+      where: { 
+        professionalId: parseInt(professionalId), 
+        startTime: { gte: new Date(start) }, 
+        endTime: { lte: new Date(end) },
+        status: { not: 'CANCELLED' } 
+      }, 
       include: { patient: true, service: true } 
     }); 
-    res.json(appts); 
+
+    // 2. Filtramos en memoria:
+    //    - Si está CONFIRMED o BLOCKED -> Pasa
+    //    - Si está PENDING_PAYMENT -> Pasa SOLO SI se creó hace menos de 15 min
+    const validAppts = appts.filter(appt => {
+      if (appt.status === 'CONFIRMED' || appt.status === 'BLOCKED') return true;
+      if (appt.status === 'PENDING_PAYMENT') {
+        const minutesSinceCreation = (new Date() - new Date(appt.createdAt)) / 60000;
+        return minutesSinceCreation < 15; // Si es mayor, se oculta (se "anula")
+      }
+      return false; // Por si acaso hay otro estado raro
+    });
+
+    res.json(validAppts); 
   } catch { 
     res.status(500).json({ error: 'Err' }); 
   }

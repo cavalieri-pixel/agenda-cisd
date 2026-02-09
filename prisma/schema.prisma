@@ -27,13 +27,13 @@ model Service {
   id            Int           @id @default(autoincrement())
   
   // --- DATOS DE TRATAMIENTO ---
-  category      String?       @default("General") // Ej: Consulta, Procedimiento
-  specialty     String?       // Ej: Kinesiología, Psicología
+  category      String?       @default("General") 
+  specialty     String?       
   name          String
   code          String        @unique
   price         Int
-  discountValue Int           @default(0) // Descuento en pesos
-  description   String?       @db.Text    // Descripción larga
+  discountValue Int           @default(0) 
+  description   String?       @db.Text    
   // --------------------------
 
   durationMin   Int           @default(30)
@@ -62,9 +62,11 @@ model Appointment {
   id             Int          @id @default(autoincrement())
   startTime      DateTime
   endTime        DateTime
-  status         String       @default("CONFIRMED")
+  status         String       @default("CONFIRMED") // "CONFIRMED", "CANCELLED", "BLOCKED"
   
-  // Financiero
+  // Nuevo: Título para el bloqueo (ej: "Almuerzo", "Vacaciones")
+  title          String?      
+
   price          Int          @default(0)
   paymentStatus  String       @default("PENDING")
   paymentMethod  String?      
@@ -77,11 +79,12 @@ model Appointment {
   professionalId Int
   professional   Professional @relation(fields: [professionalId], references: [id])
   
-  patientId      Int
-  patient        Patient      @relation(fields: [patientId], references: [id])
+  // RELACIONES OPCIONALES (Para permitir bloqueos sin paciente)
+  patientId      Int?
+  patient        Patient?     @relation(fields: [patientId], references: [id])
   
-  serviceId      Int
-  service        Service      @relation(fields: [serviceId], references: [id])
+  serviceId      Int?
+  service        Service?     @relation(fields: [serviceId], references: [id])
 
   meetLink       String?
   googleEventId  String?

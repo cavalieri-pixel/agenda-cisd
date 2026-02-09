@@ -12,7 +12,6 @@ const app = express();
 const port = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'secret_cisd_key_2026';
 
-// Config MercadoPago
 const client = process.env.MP_ACCESS_TOKEN 
   ? new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN }) 
   : null;
@@ -20,7 +19,6 @@ const client = process.env.MP_ACCESS_TOKEN
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Config Google Calendar
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
@@ -47,7 +45,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 // ==========================================
-//      RUTAS PÚBLICAS (AGENDAMIENTO)
+//      RUTAS PÚBLICAS
 // ==========================================
 
 // 1. BUSCAR PACIENTE
@@ -60,17 +58,14 @@ app.get('/api/patients/search/:rut', async (req, res) => {
   } catch { res.status(500).json({ error: 'Error servidor' }); }
 });
 
-// 2. SLOTS DISPONIBLES (Con intervalo dinámico y corrección de día)
+// 2. SLOTS DISPONIBLES
 app.get('/api/public/slots', async (req, res) => {
   const { date, professionalId, duration } = req.query; 
   try {
     const searchDate = new Date(date);
     const jsDay = searchDate.getUTCDay(); 
-    
-    // Traducción de días: JS(0=Dom) -> Admin(6=Dom, 0=Lun)
     const adjustedDay = (jsDay === 0) ? 6 : jsDay - 1;
 
-    // 1. Obtener profesional para saber su intervalo
     const pro = await prisma.professional.findUnique({ where: { id: parseInt(professionalId) } });
     const interval = pro.slotInterval || 30;
 
@@ -113,8 +108,6 @@ app.get('/api/public/slots', async (req, res) => {
         return (sStart < aEnd && sEnd > aStart);
       });
       if (!isBusy) slots.push(toTimeStr(sStart));
-      
-      // AQUÍ ESTÁ LA MAGIA: Usamos el intervalo dinámico
       currentMins += interval; 
     }
     res.json(slots);
@@ -127,12 +120,7 @@ app.post('/api/patients', async (req, res) => {
   const { rut, name, email, phone, address, prevision, birthDate } = req.body;
   try { 
     const n = await prisma.patient.create({ 
-      data: { 
-        rut, name, email, phone, 
-        address: address || null, 
-        prevision: prevision || null, 
-        birthDate: birthDate ? new Date(birthDate) : null 
-      } 
+      data: { rut, name, email, phone, address: address || null, prevision: prevision || null, birthDate: birthDate ? new Date(birthDate) : null } 
     }); 
     res.json(n); 
   } 
@@ -143,12 +131,7 @@ app.put('/api/patients/:id', async (req, res) => {
   try { 
     const u = await prisma.patient.update({ 
       where: { id: parseInt(req.params.id) }, 
-      data: { 
-        rut, name, email, phone,
-        address: address || null, 
-        prevision: prevision || null, 
-        birthDate: birthDate ? new Date(birthDate) : null 
-      } 
+      data: { rut, name, email, phone, address: address || null, prevision: prevision || null, birthDate: birthDate ? new Date(birthDate) : null } 
     }); 
     res.json(u); 
   } catch { res.status(500).json({ error: 'Err' }); }
@@ -158,56 +141,40 @@ app.get('/api/patients/:id/history', async (req, res) => { try { const h = await
 
 // --- PROFESIONALES ---
 app.get('/api/professionals', async (req, res) => { const p = await prisma.professional.findMany({ orderBy: { id: 'asc' } }); res.json(p); });
-
 app.post('/api/professionals', async (req, res) => {
   const { name, email, password, color, phone, slotInterval } = req.body;
   try { 
     const hp = await bcrypt.hash(password, 10); 
-    const n = await prisma.professional.create({ 
-      data: { name, email, password: hp, color, phone, slotInterval: parseInt(slotInterval) || 30 } 
-    }); 
+    const n = await prisma.professional.create({ data: { name, email, password: hp, color, phone, slotInterval: parseInt(slotInterval) || 30 } }); 
     res.json(n); 
   } catch { res.status(500).json({ error: 'Err' }); }
 });
-
 app.put('/api/professionals/:id', async (req, res) => { 
   const { name, email, color, phone, slotInterval } = req.body; 
   try { 
-    const u = await prisma.professional.update({ 
-      where: { id: parseInt(req.params.id) }, 
-      data: { name, email, color, phone, slotInterval: parseInt(slotInterval) || 30 } 
-    }); 
+    const u = await prisma.professional.update({ where: { id: parseInt(req.params.id) }, data: { name, email, color, phone, slotInterval: parseInt(slotInterval) || 30 } }); 
     res.json(u); 
   } catch { res.status(500).json({ error: 'Err' }); } 
 });
-
 app.delete('/api/professionals/:id', async (req, res) => { try { await prisma.professional.delete({ where: { id: parseInt(req.params.id) } }); res.json({ message: 'Deleted' }); } catch { res.status(500).json({ error: 'Err' }); } });
 app.post('/api/professionals/import', async (req, res) => {
   const { data } = req.body; let c=0; for(const i of data) { try { const hp = await bcrypt.hash(i.password||'cisd123',10); await prisma.professional.create({ data: { name:i.name, email:i.email, password:hp, phone:i.phone||'', color:i.color||'#3788d8', slotInterval: parseInt(i.slotInterval)||30 } }); c++; } catch {} } res.json({ message: `Procesados: ${c}` });
 });
 app.get('/api/professionals/export', async (req, res) => { const p = await prisma.professional.findMany(); let csv='name,email,phone,color,slotInterval\n'; p.forEach(x=>csv+=`"${x.name}","${x.email}","${x.phone||''}","${x.color}",${x.slotInterval}\n`); res.header('Content-Type','text/csv').attachment('profesionales.csv').send(csv); });
 
-// --- SERVICIOS (TRATAMIENTOS) ---
-app.get('/api/services', async (req, res) => { 
-  const s = await prisma.service.findMany({ orderBy: { name: 'asc' } }); 
-  res.json(s); 
-});
+// --- SERVICIOS ---
+app.get('/api/services', async (req, res) => { const s = await prisma.service.findMany({ orderBy: { name: 'asc' } }); res.json(s); });
 app.post('/api/services', async (req, res) => {
   const { category, specialty, name, code, price, discountValue, description, durationMin, isTelemed } = req.body;
   try {
-    const n = await prisma.service.create({
-      data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed: isTelemed||false }
-    });
+    const n = await prisma.service.create({ data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed: isTelemed||false } });
     res.json(n);
   } catch { res.status(500).json({ error: 'Error crear servicio' }); }
 });
 app.put('/api/services/:id', async (req, res) => {
   const { category, specialty, name, code, price, discountValue, description, durationMin, isTelemed } = req.body;
   try {
-    const u = await prisma.service.update({
-      where: { id: parseInt(req.params.id) },
-      data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed }
-    });
+    const u = await prisma.service.update({ where: { id: parseInt(req.params.id) }, data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed } });
     res.json(u);
   } catch { res.status(500).json({ error: 'Error actualizar servicio' }); }
 });
@@ -221,26 +188,46 @@ app.post('/api/availability', async (req, res) => {
   const { professionalId, schedules } = req.body; try { await prisma.availability.deleteMany({ where: { professionalId: parseInt(professionalId) } }); if(schedules.length>0) await Promise.all(schedules.map(s => prisma.availability.create({ data: { professionalId: parseInt(professionalId), dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime } }))); res.json({ message: 'OK' }); } catch { res.status(500).json({ error: 'Err' }); }
 });
 
-// --- CITAS ---
+// --- CITAS Y BLOQUEOS ---
 app.get('/api/appointments', async (req, res) => {
   const { professionalId, start, end } = req.query;
   try { const appts = await prisma.appointment.findMany({ where: { professionalId: parseInt(professionalId), startTime: { gte: new Date(start) }, endTime: { lte: new Date(end) } }, include: { patient: true, service: true } }); res.json(appts); } catch { res.status(500).json({ error: 'Err' }); }
 });
 
 app.post('/api/appointments', async (req, res) => {
-  const { professionalId, serviceCode, startTime, rut, name, email, phone, address, prevision, birthDate } = req.body;
+  const { 
+    professionalId, serviceCode, startTime, endTime, 
+    rut, name, email, phone, address, prevision, birthDate,
+    type, title // 'BLOCK' o 'APPOINTMENT'
+  } = req.body;
+
   try {
+    // A. CASO BLOQUEO (ADMINISTRATIVO)
+    if (type === 'BLOCK') {
+      const start = new Date(startTime);
+      const end = new Date(endTime);
+      const conflict = await prisma.appointment.findFirst({
+        where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] }
+      });
+      if (conflict) return res.status(409).json({ error: 'Ya existe una cita o bloqueo en ese horario.' });
+
+      const block = await prisma.appointment.create({
+        data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), status: 'BLOCKED', title: title || 'Horario No Disponible' }
+      });
+      return res.json(block);
+    }
+
+    // B. CASO CITA NORMAL (PACIENTE)
     const s = await prisma.service.findUnique({ where: { code: serviceCode } });
     if (!s) return res.status(404).json({ error: 'Service not found' });
 
     const start = new Date(startTime);
     const end = new Date(start.getTime() + s.durationMin * 60000);
 
-    // ANTI-COLISIÓN
     const conflict = await prisma.appointment.findFirst({
         where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] }
     });
-    if (conflict) return res.status(409).json({ error: 'Lo sentimos, ese horario ya fue reservado.' });
+    if (conflict) return res.status(409).json({ error: 'Horario ocupado.' });
 
     let p = await prisma.patient.upsert({
       where: { rut: rut },

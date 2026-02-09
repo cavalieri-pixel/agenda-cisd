@@ -39,15 +39,11 @@ app.post('/api/login', async (req, res) => {
   try {
     const professional = await prisma.professional.findUnique({ where: { email } });
     if (!professional) return res.status(401).json({ error: 'Usuario no encontrado' });
-    
     const passwordValid = await bcrypt.compare(password, professional.password);
     if (!passwordValid) return res.status(401).json({ error: 'Contraseña incorrecta' });
-    
     const token = jwt.sign({ id: professional.id, email: professional.email, name: professional.name }, JWT_SECRET, { expiresIn: '12h' });
     res.json({ token, user: { id: professional.id, name: professional.name, email: professional.email } });
-  } catch (error) { 
-    res.status(500).json({ error: 'Error al iniciar sesión' }); 
-  }
+  } catch (error) { res.status(500).json({ error: 'Error al iniciar sesión' }); }
 });
 
 // --- PÚBLICAS: BUSCAR PACIENTE ---
@@ -57,15 +53,22 @@ app.get('/api/patients/search/:rut', async (req, res) => {
     const patient = await prisma.patient.findUnique({ where: { rut } });
     if (patient) return res.json(patient);
     res.status(404).json({ error: 'Paciente no encontrado' });
-  } catch { 
-    res.status(500).json({ error: 'Error servidor' }); 
-  }
+  } catch { res.status(500).json({ error: 'Error servidor' }); }
 });
 
-// --- PÚBLICAS: SLOTS DISPONIBLES (CON LÓGICA CHILE & 15 MIN) ---
+// --- PÚBLICAS: SLOTS DISPONIBLES (CON AUTO-LIMPIEZA DE PENDIENTES) ---
 app.get('/api/public/slots', async (req, res) => {
   const { date, professionalId, duration } = req.query; 
   try {
+    // 1. AUTO-LIMPIEZA: Eliminar cualquier cita pendiente de hace >15 mins
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    await prisma.appointment.deleteMany({
+      where: {
+        status: 'PENDING_PAYMENT',
+        createdAt: { lt: fifteenMinutesAgo }
+      }
+    });
+
     const searchDate = new Date(date);
     const jsDay = searchDate.getUTCDay(); 
     const adjustedDay = (jsDay === 0) ? 6 : jsDay - 1;
@@ -91,10 +94,9 @@ app.get('/api/public/slots', async (req, res) => {
       }
     });
 
-    // --- LÓGICA DE TIEMPO "CHILE" ---
+    // LÓGICA DE TIEMPO "CHILE" (Para ocultar horas pasadas del día actual)
     const now = new Date();
     const chileTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Santiago" }));
-    
     const [qYear, qMonth, qDay] = date.split('-').map(Number);
     const isToday = (
         chileTime.getFullYear() === qYear &&
@@ -102,7 +104,6 @@ app.get('/api/public/slots', async (req, res) => {
         chileTime.getDate() === qDay
     );
     const currentChileMins = chileTime.getHours() * 60 + chileTime.getMinutes();
-    // --------------------------------
 
     const slots = [];
     const toMins = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
@@ -120,268 +121,94 @@ app.get('/api/public/slots', async (req, res) => {
       const sStart = currentMins; 
       const sEnd = currentMins + serviceDuration;
       
-      // 1. FILTRO PASADO
+      // FILTRO PASADO
       if (isToday && sStart < currentChileMins + 30) {
         currentMins += interval;
         continue; 
       }
-      
-      // 2. FILTRO OCUPACIÓN
+
+      // FILTRO OCUPACIÓN
       const isBusy = existingAppointments.some(appt => {
         const aStart = appt.startTime.getUTCHours() * 60 + appt.startTime.getUTCMinutes();
         const aEnd = appt.endTime.getUTCHours() * 60 + appt.endTime.getUTCMinutes();
         const overlap = (sStart < aEnd && sEnd > aStart);
-        if (!overlap) return false;
-
-        if (appt.status === 'CONFIRMED' || appt.status === 'BLOCKED') return true;
-        if (appt.status === 'PENDING_PAYMENT') {
-          const mins = (new Date() - new Date(appt.createdAt)) / 60000;
-          return mins < 15; 
-        }
-        return false;
+        return overlap; 
+        // Nota: Como ya hicimos deleteMany arriba, no necesitamos verificar status 'PENDING' aquí,
+        // porque si existe en la BD a estas alturas, es válida o reciente (<15min).
       });
 
       if (!isBusy) slots.push(toTimeStr(sStart));
       currentMins += interval; 
     }
     res.json(slots);
-  } catch (e) { 
-    console.error(e); 
-    res.status(500).json({ error: 'Error calculando horarios' }); 
-  }
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Error calculando horarios' }); }
 });
 
 // ==========================================
 //               CRUD PACIENTES
 // ==========================================
-app.get('/api/patients', async (req, res) => { 
-  try { 
-    const p = await prisma.patient.findMany({ orderBy: { name: 'asc' } }); 
-    res.json(p); 
-  } catch { 
-    res.status(500).json({ error: 'Err' }); 
-  } 
-});
-
+app.get('/api/patients', async (req, res) => { try { const p = await prisma.patient.findMany({ orderBy: { name: 'asc' } }); res.json(p); } catch { res.status(500).json({ error: 'Err' }); } });
 app.post('/api/patients', async (req, res) => {
   const { rut, name, email, phone, address, prevision, birthDate } = req.body;
-  try { 
-    const n = await prisma.patient.create({ 
-      data: { rut, name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null } 
-    }); 
-    res.json(n); 
-  } catch (e) { 
-    if (e.code === 'P2002') return res.status(400).json({ error: 'RUT existe' }); 
-    res.status(500).json({ error: 'Err' }); 
-  }
+  try { const n = await prisma.patient.create({ data: { rut, name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null } }); res.json(n); } 
+  catch (e) { if (e.code === 'P2002') return res.status(400).json({ error: 'RUT existe' }); res.status(500).json({ error: 'Err' }); }
 });
-
 app.put('/api/patients/:id', async (req, res) => {
   const { rut, name, email, phone, address, prevision, birthDate } = req.body;
-  try { 
-    const u = await prisma.patient.update({ 
-      where: { id: parseInt(req.params.id) }, 
-      data: { rut, name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null } 
-    }); 
-    res.json(u); 
-  } catch { 
-    res.status(500).json({ error: 'Err' }); 
-  }
+  try { const u = await prisma.patient.update({ where: { id: parseInt(req.params.id) }, data: { rut, name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null } }); res.json(u); } catch { res.status(500).json({ error: 'Err' }); }
 });
-
-app.delete('/api/patients/:id', async (req, res) => { 
-  try { 
-    await prisma.patient.delete({ where: { id: parseInt(req.params.id) } }); 
-    res.json({ message: 'Deleted' }); 
-  } catch { 
-    res.status(500).json({ error: 'Err' }); 
-  } 
-});
-
-app.get('/api/patients/:id/history', async (req, res) => { 
-  try { 
-    const h = await prisma.appointment.findMany({ where: { patientId: parseInt(req.params.id) }, include: { service: true, professional: true }, orderBy: { startTime: 'desc' } }); 
-    res.json(h); 
-  } catch { 
-    res.status(500).json({ error: 'Err' }); 
-  } 
-});
+app.delete('/api/patients/:id', async (req, res) => { try { await prisma.patient.delete({ where: { id: parseInt(req.params.id) } }); res.json({ message: 'Deleted' }); } catch { res.status(500).json({ error: 'Err' }); } });
+app.get('/api/patients/:id/history', async (req, res) => { try { const h = await prisma.appointment.findMany({ where: { patientId: parseInt(req.params.id) }, include: { service: true, professional: true }, orderBy: { startTime: 'desc' } }); res.json(h); } catch { res.status(500).json({ error: 'Err' }); } });
 
 // ==========================================
 //             CRUD PROFESIONALES
 // ==========================================
-app.get('/api/professionals', async (req, res) => { 
-  const p = await prisma.professional.findMany({ orderBy: { id: 'asc' } }); 
-  res.json(p); 
-});
-
-app.post('/api/professionals', async (req, res) => {
-  const { name, email, password, color, phone, slotInterval } = req.body;
-  try { 
-    const hp = await bcrypt.hash(password, 10); 
-    const n = await prisma.professional.create({ 
-      data: { name, email, password: hp, color, phone, slotInterval: parseInt(slotInterval)||30 } 
-    }); 
-    res.json(n); 
-  } catch { 
-    res.status(500).json({ error: 'Err' }); 
-  }
-});
-
-app.put('/api/professionals/:id', async (req, res) => {
-  const { name, email, color, phone, slotInterval } = req.body;
-  try { 
-    const u = await prisma.professional.update({ 
-      where: { id: parseInt(req.params.id) }, 
-      data: { name, email, color, phone, slotInterval: parseInt(slotInterval)||30 } 
-    }); 
-    res.json(u); 
-  } catch { 
-    res.status(500).json({ error: 'Err' }); 
-  }
-});
-
-app.delete('/api/professionals/:id', async (req, res) => { 
-  try { 
-    await prisma.professional.delete({ where: { id: parseInt(req.params.id) } }); 
-    res.json({ message: 'Deleted' }); 
-  } catch { 
-    res.status(500).json({ error: 'Err' }); 
-  } 
-});
-
-app.post('/api/professionals/import', async (req, res) => {
-  const { data } = req.body; 
-  let c=0; 
-  for(const i of data) { 
-    try { 
-      const hp = await bcrypt.hash(i.password||'cisd123',10); 
-      await prisma.professional.create({ data: { name:i.name, email:i.email, password:hp, phone:i.phone||'', color:i.color||'#3788d8', slotInterval: parseInt(i.slotInterval)||30 } }); 
-      c++; 
-    } catch {} 
-  } 
-  res.json({ message: `Procesados: ${c}` });
-});
-
-app.get('/api/professionals/export', async (req, res) => { 
-  const p = await prisma.professional.findMany(); 
-  let csv='name,email,phone,color,slotInterval\n'; 
-  p.forEach(x=>csv+=`"${x.name}","${x.email}","${x.phone||''}","${x.color}",${x.slotInterval}\n`); 
-  res.header('Content-Type','text/csv').attachment('profesionales.csv').send(csv); 
-});
+app.get('/api/professionals', async (req, res) => { const p = await prisma.professional.findMany({ orderBy: { id: 'asc' } }); res.json(p); });
+app.post('/api/professionals', async (req, res) => { const { name, email, password, color, phone, slotInterval } = req.body; try { const hp = await bcrypt.hash(password, 10); const n = await prisma.professional.create({ data: { name, email, password: hp, color, phone, slotInterval: parseInt(slotInterval)||30 } }); res.json(n); } catch { res.status(500).json({ error: 'Err' }); } });
+app.put('/api/professionals/:id', async (req, res) => { const { name, email, color, phone, slotInterval } = req.body; try { const u = await prisma.professional.update({ where: { id: parseInt(req.params.id) }, data: { name, email, color, phone, slotInterval: parseInt(slotInterval)||30 } }); res.json(u); } catch { res.status(500).json({ error: 'Err' }); } });
+app.delete('/api/professionals/:id', async (req, res) => { try { await prisma.professional.delete({ where: { id: parseInt(req.params.id) } }); res.json({ message: 'Deleted' }); } catch { res.status(500).json({ error: 'Err' }); } });
+app.post('/api/professionals/import', async (req, res) => { const { data } = req.body; let c=0; for(const i of data) { try { const hp = await bcrypt.hash(i.password||'cisd123',10); await prisma.professional.create({ data: { name:i.name, email:i.email, password:hp, phone:i.phone||'', color:i.color||'#3788d8', slotInterval: parseInt(i.slotInterval)||30 } }); c++; } catch {} } res.json({ message: `Procesados: ${c}` }); });
+app.get('/api/professionals/export', async (req, res) => { const p = await prisma.professional.findMany(); let csv='name,email,phone,color,slotInterval\n'; p.forEach(x=>csv+=`"${x.name}","${x.email}","${x.phone||''}","${x.color}",${x.slotInterval}\n`); res.header('Content-Type','text/csv').attachment('profesionales.csv').send(csv); });
 
 // ==========================================
 //               CRUD SERVICIOS
 // ==========================================
-app.get('/api/services', async (req, res) => { 
-  const s = await prisma.service.findMany({ orderBy: { name: 'asc' } }); 
-  res.json(s); 
-});
-
+app.get('/api/services', async (req, res) => { const s = await prisma.service.findMany({ orderBy: { name: 'asc' } }); res.json(s); });
 app.post('/api/services', async (req, res) => {
   const { category, specialty, name, code, price, discountValue, description, durationMin, isTelemed } = req.body;
-  try { 
-    const n = await prisma.service.create({ 
-      data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed: isTelemed||false } 
-    }); 
-    res.json(n); 
-  } catch { 
-    res.status(500).json({ error: 'Error' }); 
-  }
+  try { const n = await prisma.service.create({ data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed: isTelemed||false } }); res.json(n); } catch { res.status(500).json({ error: 'Error' }); }
 });
-
 app.put('/api/services/:id', async (req, res) => {
   const { category, specialty, name, code, price, discountValue, description, durationMin, isTelemed } = req.body;
-  try { 
-    const u = await prisma.service.update({ 
-      where: { id: parseInt(req.params.id) }, 
-      data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed } 
-    }); 
-    res.json(u); 
-  } catch { 
-    res.status(500).json({ error: 'Error' }); 
-  }
+  try { const u = await prisma.service.update({ where: { id: parseInt(req.params.id) }, data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed } }); res.json(u); } catch { res.status(500).json({ error: 'Error' }); }
 });
-
-app.delete('/api/services/:id', async (req, res) => { 
-  try { 
-    await prisma.service.delete({ where: { id: parseInt(req.params.id) } }); 
-    res.json({ message: 'Deleted' }); 
-  } catch { 
-    res.status(500).json({ error: 'Err' }); 
-  } 
-});
-
-app.post('/api/services/import', async (req, res) => { 
-  const { data } = req.body; 
-  let c=0; 
-  for(const i of data) { 
-    try { 
-      const isT = String(i.isTelemed).toLowerCase(); 
-      await prisma.service.create({ 
-        data: { 
-          name: i.name, 
-          code: i.code || `GEN-${Date.now()}`, 
-          durationMin: parseInt(i.durationMin)||30, 
-          price: parseInt(i.price)||0, 
-          discountValue: parseInt(i.discountValue)||0, 
-          isTelemed: (isT==='true'||isT==='si'), 
-          category: i.category||'General', 
-          specialty: i.specialty||'', 
-          description: i.description||'' 
-        } 
-      }); 
-      c++; 
-    } catch (e) { 
-      console.error("Error importando:", i.name); 
-    } 
-  } 
-  res.json({ message: `Procesados: ${c}` }); 
-});
-
-app.get('/api/services/export', async (req, res) => { 
-  const s = await prisma.service.findMany(); 
-  let csv='categoria,especialidad,nombre,codigo,precio,valor_descuento,descripcion\n'; 
-  s.forEach(x => { 
-    const desc = x.description ? x.description.replace(/"/g, '""') : ''; 
-    const p = '$' + x.price; 
-    const d = x.discountValue > 0 ? '$' + x.discountValue : '0'; 
-    csv += `"${x.category||''}","${x.specialty||''}","${x.name}","${x.code}","${p}","${d}","${desc}"\n`; 
-  }); 
-  res.header('Content-Type','text/csv').attachment('servicios.csv').send(csv); 
-});
+app.delete('/api/services/:id', async (req, res) => { try { await prisma.service.delete({ where: { id: parseInt(req.params.id) } }); res.json({ message: 'Deleted' }); } catch { res.status(500).json({ error: 'Err' }); } });
+app.post('/api/services/import', async (req, res) => { const { data } = req.body; let c=0; for(const i of data) { try { const isT = String(i.isTelemed).toLowerCase(); await prisma.service.create({ data: { name:i.name, code:i.code||`GEN-${Date.now()}`, durationMin:parseInt(i.durationMin)||30, price:parseInt(i.price)||0, discountValue:parseInt(i.discountValue)||0, isTelemed:(isT==='true'||isT==='si'), category:i.category||'General', specialty:i.specialty||'', description:i.description||'' } }); c++; } catch (e) { console.error("Error importando:", i.name); } } res.json({ message: `Procesados: ${c}` }); });
+app.get('/api/services/export', async (req, res) => { const s = await prisma.service.findMany(); let csv='categoria,especialidad,nombre,codigo,precio,valor_descuento,descripcion\n'; s.forEach(x => { const desc = x.description?x.description.replace(/"/g,'""'):''; const p = '$'+x.price; const d = x.discountValue>0?'$'+x.discountValue:'0'; csv += `"${x.category||''}","${x.specialty||''}","${x.name}","${x.code}","${p}","${d}","${desc}"\n`; }); res.header('Content-Type','text/csv').attachment('servicios.csv').send(csv); });
 
 // --- HORARIOS (AVAILABILITY) ---
-app.get('/api/availability/:pid', async (req, res) => { 
-  const s = await prisma.availability.findMany({ where: { professionalId: parseInt(req.params.pid) } }); 
-  res.json(s); 
-});
-
-app.post('/api/availability', async (req, res) => {
-  const { professionalId, schedules } = req.body; 
-  try { 
-    await prisma.availability.deleteMany({ where: { professionalId: parseInt(professionalId) } }); 
-    if(schedules.length > 0) {
-      await Promise.all(schedules.map(s => prisma.availability.create({ 
-        data: { professionalId: parseInt(professionalId), dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime } 
-      })));
-    }
-    res.json({ message: 'OK' }); 
-  } catch { 
-    res.status(500).json({ error: 'Err' }); 
-  }
-});
+app.get('/api/availability/:pid', async (req, res) => { const s = await prisma.availability.findMany({ where: { professionalId: parseInt(req.params.pid) } }); res.json(s); });
+app.post('/api/availability', async (req, res) => { const { professionalId, schedules } = req.body; try { await prisma.availability.deleteMany({ where: { professionalId: parseInt(professionalId) } }); if(schedules.length>0) { await Promise.all(schedules.map(s => prisma.availability.create({ data: { professionalId: parseInt(professionalId), dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime } }))); } res.json({ message: 'OK' }); } catch { res.status(500).json({ error: 'Err' }); } });
 
 // ==========================================
 //           CITAS Y AGENDAMIENTO
 // ==========================================
 
-// --- LEER CITAS (PARA ADMIN) ---
-// AQUÍ ESTÁ EL CAMBIO: Filtramos las pendientes viejas para que no aparezcan en la agenda
+// --- LEER CITAS (PARA ADMIN - CON AUTO-LIMPIEZA) ---
 app.get('/api/appointments', async (req, res) => {
   const { professionalId, start, end } = req.query;
   try { 
-    // 1. Traemos todas las citas que NO estén canceladas explícitamente
+    // 1. AUTO-LIMPIEZA DE BASURA (Citas > 15 min sin pagar)
+    // Esto borra físicamente el registro de la DB.
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    await prisma.appointment.deleteMany({
+      where: {
+        status: 'PENDING_PAYMENT',
+        createdAt: { lt: fifteenMinutesAgo }
+      }
+    });
+
+    // 2. Traer lo que queda (Solo citas reales)
     const appts = await prisma.appointment.findMany({ 
       where: { 
         professionalId: parseInt(professionalId), 
@@ -392,20 +219,9 @@ app.get('/api/appointments', async (req, res) => {
       include: { patient: true, service: true } 
     }); 
 
-    // 2. Filtramos en memoria:
-    //    - Si está CONFIRMED o BLOCKED -> Pasa
-    //    - Si está PENDING_PAYMENT -> Pasa SOLO SI se creó hace menos de 15 min
-    const validAppts = appts.filter(appt => {
-      if (appt.status === 'CONFIRMED' || appt.status === 'BLOCKED') return true;
-      if (appt.status === 'PENDING_PAYMENT') {
-        const minutesSinceCreation = (new Date() - new Date(appt.createdAt)) / 60000;
-        return minutesSinceCreation < 15; // Si es mayor, se oculta (se "anula")
-      }
-      return false; // Por si acaso hay otro estado raro
-    });
-
-    res.json(validAppts); 
-  } catch { 
+    res.json(appts); 
+  } catch (e) { 
+    console.error(e);
     res.status(500).json({ error: 'Err' }); 
   }
 });
@@ -420,17 +236,10 @@ app.post('/api/appointments', async (req, res) => {
   try {
     // A. BLOQUEOS
     if (type === 'BLOCK') {
-      const start = new Date(startTime); 
-      const end = new Date(endTime);
-      
-      const conflict = await prisma.appointment.findFirst({ 
-        where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] } 
-      });
+      const start = new Date(startTime); const end = new Date(endTime);
+      const conflict = await prisma.appointment.findFirst({ where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] } });
       if (conflict) return res.status(409).json({ error: 'Conflicto de horario' });
-      
-      const block = await prisma.appointment.create({ 
-        data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), status: 'BLOCKED', title: title || 'Bloqueo' } 
-      });
+      const block = await prisma.appointment.create({ data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), status: 'BLOCKED', title: title || 'Bloqueo' } });
       return res.json(block);
     }
 
@@ -441,20 +250,16 @@ app.post('/api/appointments', async (req, res) => {
     const start = new Date(startTime);
     const end = new Date(start.getTime() + s.durationMin * 60000);
 
+    // Revisar Conflicto (Incluyendo las pendientes recientes)
     const existing = await prisma.appointment.findMany({
       where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] }
     });
     
-    const isActuallyBusy = existing.some(appt => {
-        if (appt.status === 'CONFIRMED' || appt.status === 'BLOCKED') return true;
-        if (appt.status === 'PENDING_PAYMENT') {
-             const mins = (new Date() - new Date(appt.createdAt)) / 60000;
-             return mins < 15; 
-        }
-        return false;
-    });
-
-    if (isActuallyBusy) return res.status(409).json({ error: 'Horario ya ocupado por otra persona.' });
+    // Si encontramos cualquier cita en ese horario, ES UN CONFLICTO.
+    // (Porque las viejas ya se borraron automáticamente en el GET, así que lo que queda aquí es reciente y válido).
+    if (existing.length > 0) {
+      return res.status(409).json({ error: 'Horario ya ocupado por otra persona.' });
+    }
 
     let p = await prisma.patient.upsert({
       where: { rut: rut },
@@ -468,7 +273,6 @@ app.post('/api/appointments', async (req, res) => {
       data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), patientId: p.id, serviceId: s.id, price: s.price, paymentStatus: 'PENDING', status: initialStatus }
     });
 
-    // Google Meet
     let meetLink = null;
     if (s.isTelemed || s.name.toLowerCase().includes('tele')) {
        try {
@@ -481,7 +285,6 @@ app.post('/api/appointments', async (req, res) => {
       } catch {}
     }
 
-    // MercadoPago Preference
     let paymentLink = null;
     if (s.price > 0 && client) {
       try {
@@ -502,10 +305,7 @@ app.post('/api/appointments', async (req, res) => {
     }
 
     res.json({ ...appt, paymentLink });
-  } catch (error) { 
-    console.error(error); 
-    res.status(500).json({ error: 'Error creating appt' }); 
-  }
+  } catch (error) { console.error(error); res.status(500).json({ error: 'Error creating appt' }); }
 });
 
 // --- WEBHOOK MERCADOPAGO ---
@@ -529,10 +329,7 @@ app.post('/api/webhook/mercadopago', async (req, res) => {
       }
     }
     res.sendStatus(200);
-  } catch (error) { 
-    console.error('Webhook Error:', error); 
-    res.sendStatus(500); 
-  }
+  } catch (error) { console.error('Webhook Error:', error); res.sendStatus(500); }
 });
 
 // --- ACTUALIZAR CITA ---
@@ -542,7 +339,6 @@ app.put('/api/appointments/:id', async (req, res) => {
   try {
     const appointment = await prisma.appointment.findUnique({ where: { id: parseInt(id) }, include: { service: true } });
     if (!appointment) return res.status(404).json({ error: 'Not found' });
-    
     const dataToUpdate = {};
     if (newStartTime) {
       const newStart = new Date(newStartTime);
@@ -559,12 +355,9 @@ app.put('/api/appointments/:id', async (req, res) => {
     if (clinicalNote !== undefined) dataToUpdate.clinicalNote = clinicalNote;
     if (paymentStatus) dataToUpdate.paymentStatus = paymentStatus;
     if (paymentMethod) dataToUpdate.paymentMethod = paymentMethod;
-    
     const updated = await prisma.appointment.update({ where: { id: parseInt(id) }, data: dataToUpdate });
     res.json(updated);
-  } catch { 
-    res.status(500).json({ error: 'Error update' }); 
-  }
+  } catch { res.status(500).json({ error: 'Error update' }); }
 });
 
 // --- ELIMINAR CITA ---
@@ -572,16 +365,10 @@ app.delete('/api/appointments/:id', async (req, res) => {
   const { id } = req.params;
   try {
     const appt = await prisma.appointment.findUnique({ where: { id: parseInt(id) } });
-    if (appt && appt.googleEventId) { 
-      try { 
-        await calendar.events.delete({ calendarId: 'primary', eventId: appt.googleEventId }); 
-      } catch {} 
-    }
+    if (appt && appt.googleEventId) { try { await calendar.events.delete({ calendarId: 'primary', eventId: appt.googleEventId }); } catch {} }
     await prisma.appointment.delete({ where: { id: parseInt(id) } });
     res.json({ message: 'Deleted' });
-  } catch { 
-    res.status(500).json({ error: 'Error delete' }); 
-  }
+  } catch { res.status(500).json({ error: 'Error delete' }); }
 });
 
 app.listen(port, () => { console.log(`🚀 CISD Ready on port ${port}`); });

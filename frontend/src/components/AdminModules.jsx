@@ -12,12 +12,11 @@ const downloadCSV = (data, filename) => {
   link.click();
 };
 
-// Parser inteligente que respeta comillas (ej: "descripcion con, comas")
+// Parser inteligente que respeta comillas
 const parseCSV = (text) => {
   const lines = text.split('\n').filter(l => l.trim());
   if (lines.length < 2) return [];
 
-  // Leer cabeceras y normalizar a minúsculas
   const headers = lines[0].split(',').map(h => h.trim().toLowerCase()); 
 
   const result = [];
@@ -38,9 +37,8 @@ const parseCSV = (text) => {
         current += char;
       }
     }
-    row.push(current.trim()); // Último valor
+    row.push(current.trim());
 
-    // Convertir array row a objeto usando headers
     const obj = {};
     headers.forEach((h, index) => {
       let val = row[index] || '';
@@ -54,7 +52,7 @@ const parseCSV = (text) => {
 };
 
 // =========================================================
-// 1. VISTA DE TRATAMIENTOS (JERÁRQUICA: CAT -> ESP -> SERV)
+// 1. VISTA DE TRATAMIENTOS (JERÁRQUICA + DURACIÓN)
 // =========================================================
 export function ServicesView() {
   const [services, setServices] = useState([]);
@@ -108,7 +106,8 @@ export function ServicesView() {
             discountValue: cleanPrice(d.valor_descuento || d.discountValue),
             description: d.descripcion || d.description || '',
             isTelemed: (d.nombre || '').toLowerCase().includes('online'),
-            durationMin: 30 
+            // AQUI ESTÁ EL CAMBIO PARA IMPORTAR DURACIÓN:
+            durationMin: parseInt(d.duracion || d.duration) || 30 
           };
         });
         const res = await axios.post(`${API_URL}/services/import`, { data: formatted }, {
@@ -121,14 +120,12 @@ export function ServicesView() {
     reader.readAsText(file);
   };
 
-  // LÓGICA DE AGRUPACIÓN (Categoría -> Especialidad -> Servicios)
+  // LÓGICA DE AGRUPACIÓN
   const groupedServices = services.reduce((acc, service) => {
     const cat = service.category || 'Sin Categoría';
     const spec = service.specialty || 'General';
-    
     if (!acc[cat]) acc[cat] = {};
     if (!acc[cat][spec]) acc[cat][spec] = [];
-    
     acc[cat][spec].push(service);
     return acc;
   }, {});
@@ -153,30 +150,27 @@ export function ServicesView() {
         {Object.entries(groupedServices).map(([category, specialties]) => (
           <div key={category} className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
             
-            {/* NIVEL 1: CATEGORÍA */}
             <div className="bg-teal-700 p-4 flex justify-between items-center">
               <h3 className="text-xl font-bold text-white tracking-wide uppercase flex items-center gap-2">📂 {category}</h3>
               <span className="bg-teal-800 text-teal-100 text-xs px-2 py-1 rounded-full font-bold">{Object.values(specialties).flat().length} servicios</span>
             </div>
 
-            {/* CONTENEDOR DE ESPECIALIDADES */}
             <div className="p-4 space-y-6 bg-gray-50">
               {Object.entries(specialties).map(([specialty, items]) => (
                 <div key={specialty} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   
-                  {/* NIVEL 2: ESPECIALIDAD */}
                   <div className="bg-gray-100 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
                     <h4 className="text-lg font-bold text-gray-700 flex items-center gap-2">🔹 {specialty}</h4>
                     <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{items.length} items</span>
                   </div>
 
-                  {/* NIVEL 3: TABLA DE SERVICIOS */}
                   <div className="overflow-x-auto">
                     <table className="w-full text-left">
                       <thead className="bg-white text-gray-400 text-xs uppercase border-b">
                         <tr>
                           <th className="px-4 py-2 font-semibold">Código</th>
                           <th className="px-4 py-2 font-semibold">Nombre del Tratamiento</th>
+                          <th className="px-4 py-2 font-semibold">Duración</th> {/* NUEVA COLUMNA */}
                           <th className="px-4 py-2 font-semibold text-right">Precio</th>
                           <th className="px-4 py-2 font-semibold text-right">Acciones</th>
                         </tr>
@@ -188,6 +182,10 @@ export function ServicesView() {
                             <td className="px-4 py-3">
                               <p className="font-bold text-gray-800 text-sm">{s.name}</p>
                               {s.description && <p className="text-xs text-gray-400 italic mt-1 line-clamp-1">{s.description}</p>}
+                            </td>
+                            {/* NUEVA CELDA DE DATOS */}
+                            <td className="px-4 py-3 text-sm text-gray-600">
+                              <span className="bg-gray-100 px-2 py-1 rounded text-xs font-bold">{s.durationMin} min</span>
                             </td>
                             <td className="px-4 py-3 text-right">
                               <div className="font-bold text-gray-700">${s.price.toLocaleString('es-CL')}</div>
@@ -237,7 +235,6 @@ export function ServicesView() {
         </div>
       )}
 
-      {/* MODAL DE PROGRESO */}
       {isUploading && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[60]">
           <div className="bg-white p-8 rounded-xl shadow-2xl flex flex-col items-center max-w-sm w-full">
@@ -254,7 +251,7 @@ export function ServicesView() {
 }
 
 // =========================================================
-// 2. VISTA DE PACIENTES (COMPLETA)
+// 2. VISTA DE PACIENTES
 // =========================================================
 export function PatientsView() {
   const [patients, setPatients] = useState([]);
@@ -330,7 +327,7 @@ export function PatientsView() {
 }
 
 // =========================================================
-// 3. VISTA DE PROFESIONALES (COMPLETA)
+// 3. VISTA DE PROFESIONALES
 // =========================================================
 export function ProfessionalsView() {
   const [profs, setProfs] = useState([]);
@@ -379,7 +376,7 @@ export function ProfessionalsView() {
 }
 
 // =========================================================
-// 4. VISTA DE HORARIOS (COMPLETA)
+// 4. VISTA DE HORARIOS
 // =========================================================
 export function ScheduleView() {
   const [profs, setProfs] = useState([]);

@@ -5,14 +5,14 @@ const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { google } = require('googleapis');
-const { MercadoPagoConfig, Preference } = require('mercadopago');
+const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
 
 const prisma = new PrismaClient();
 const app = express();
 const port = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'secret_cisd_key_2026';
 
-// Config MercadoPago
+// --- CONFIGURACIÓN MERCADOPAGO ---
 const client = process.env.MP_ACCESS_TOKEN 
   ? new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN }) 
   : null;
@@ -20,7 +20,7 @@ const client = process.env.MP_ACCESS_TOKEN
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Config Google Calendar
+// --- CONFIGURACIÓN GOOGLE CALENDAR ---
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
@@ -39,28 +39,30 @@ app.post('/api/login', async (req, res) => {
   try {
     const professional = await prisma.professional.findUnique({ where: { email } });
     if (!professional) return res.status(401).json({ error: 'Usuario no encontrado' });
+    
     const passwordValid = await bcrypt.compare(password, professional.password);
     if (!passwordValid) return res.status(401).json({ error: 'Contraseña incorrecta' });
+    
     const token = jwt.sign({ id: professional.id, email: professional.email, name: professional.name }, JWT_SECRET, { expiresIn: '12h' });
     res.json({ token, user: { id: professional.id, name: professional.name, email: professional.email } });
-  } catch (error) { res.status(500).json({ error: 'Error al iniciar sesión' }); }
+  } catch (error) { 
+    res.status(500).json({ error: 'Error al iniciar sesión' }); 
+  }
 });
 
-// ==========================================
-//      RUTAS PÚBLICAS (AGENDAMIENTO)
-// ==========================================
-
-// 1. BUSCAR PACIENTE
+// --- PÚBLICAS: BUSCAR PACIENTE ---
 app.get('/api/patients/search/:rut', async (req, res) => {
   const { rut } = req.params;
   try {
     const patient = await prisma.patient.findUnique({ where: { rut } });
     if (patient) return res.json(patient);
     res.status(404).json({ error: 'Paciente no encontrado' });
-  } catch { res.status(500).json({ error: 'Error servidor' }); }
+  } catch { 
+    res.status(500).json({ error: 'Error servidor' }); 
+  }
 });
 
-// 2. SLOTS DISPONIBLES
+// --- PÚBLICAS: SLOTS DISPONIBLES (CON LÓGICA DE 15 MINUTOS) ---
 app.get('/api/public/slots', async (req, res) => {
   const { date, professionalId, duration } = req.query; 
   try {
@@ -104,111 +106,164 @@ app.get('/api/public/slots', async (req, res) => {
     while (currentMins + serviceDuration <= endMins) {
       const sStart = currentMins; 
       const sEnd = currentMins + serviceDuration;
+      
       const isBusy = existingAppointments.some(appt => {
         const aStart = appt.startTime.getUTCHours() * 60 + appt.startTime.getUTCMinutes();
         const aEnd = appt.endTime.getUTCHours() * 60 + appt.endTime.getUTCMinutes();
-        return (sStart < aEnd && sEnd > aStart);
+        
+        const overlap = (sStart < aEnd && sEnd > aStart);
+        if (!overlap) return false;
+
+        // LÓGICA DE LIBERACIÓN:
+        if (appt.status === 'CONFIRMED' || appt.status === 'BLOCKED') return true;
+        
+        if (appt.status === 'PENDING_PAYMENT') {
+          const minutesSinceCreation = (new Date() - new Date(appt.createdAt)) / 60000;
+          return minutesSinceCreation < 15; // Bloquea solo si es reciente
+        }
+        return false;
       });
+
       if (!isBusy) slots.push(toTimeStr(sStart));
       currentMins += interval; 
     }
     res.json(slots);
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Error calculando horarios' }); }
+  } catch (e) { 
+    console.error(e); res.status(500).json({ error: 'Error calculando horarios' }); 
+  }
 });
 
-// --- PACIENTES ---
-app.get('/api/patients', async (req, res) => { try { const p = await prisma.patient.findMany({ orderBy: { name: 'asc' } }); res.json(p); } catch { res.status(500).json({ error: 'Err' }); } });
+// ==========================================
+//               CRUD PACIENTES
+// ==========================================
+app.get('/api/patients', async (req, res) => { 
+  try { 
+    const p = await prisma.patient.findMany({ orderBy: { name: 'asc' } }); 
+    res.json(p); 
+  } catch { res.status(500).json({ error: 'Err' }); } 
+});
+
 app.post('/api/patients', async (req, res) => {
   const { rut, name, email, phone, address, prevision, birthDate } = req.body;
   try { 
     const n = await prisma.patient.create({ 
-      data: { 
-        rut, name, email, phone, 
-        address: address || null, 
-        prevision: prevision || null, 
-        birthDate: birthDate ? new Date(birthDate) : null 
-      } 
+      data: { rut, name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null } 
     }); 
     res.json(n); 
-  } 
-  catch (e) { if (e.code === 'P2002') return res.status(400).json({ error: 'RUT existe' }); res.status(500).json({ error: 'Err' }); }
+  } catch (e) { 
+    if (e.code === 'P2002') return res.status(400).json({ error: 'RUT existe' }); 
+    res.status(500).json({ error: 'Err' }); 
+  }
 });
+
 app.put('/api/patients/:id', async (req, res) => {
   const { rut, name, email, phone, address, prevision, birthDate } = req.body;
   try { 
     const u = await prisma.patient.update({ 
       where: { id: parseInt(req.params.id) }, 
-      data: { 
-        rut, name, email, phone,
-        address: address || null, 
-        prevision: prevision || null, 
-        birthDate: birthDate ? new Date(birthDate) : null 
-      } 
+      data: { rut, name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null } 
     }); 
     res.json(u); 
   } catch { res.status(500).json({ error: 'Err' }); }
 });
-app.delete('/api/patients/:id', async (req, res) => { try { await prisma.patient.delete({ where: { id: parseInt(req.params.id) } }); res.json({ message: 'Deleted' }); } catch { res.status(500).json({ error: 'Err' }); } });
-app.get('/api/patients/:id/history', async (req, res) => { try { const h = await prisma.appointment.findMany({ where: { patientId: parseInt(req.params.id) }, include: { service: true, professional: true }, orderBy: { startTime: 'desc' } }); res.json(h); } catch { res.status(500).json({ error: 'Err' }); } });
 
-// --- PROFESIONALES ---
-app.get('/api/professionals', async (req, res) => { const p = await prisma.professional.findMany({ orderBy: { id: 'asc' } }); res.json(p); });
+app.delete('/api/patients/:id', async (req, res) => { 
+  try { 
+    await prisma.patient.delete({ where: { id: parseInt(req.params.id) } }); 
+    res.json({ message: 'Deleted' }); 
+  } catch { res.status(500).json({ error: 'Err' }); } 
+});
+
+app.get('/api/patients/:id/history', async (req, res) => { 
+  try { 
+    const h = await prisma.appointment.findMany({ where: { patientId: parseInt(req.params.id) }, include: { service: true, professional: true }, orderBy: { startTime: 'desc' } }); 
+    res.json(h); 
+  } catch { res.status(500).json({ error: 'Err' }); } 
+});
+
+// ==========================================
+//             CRUD PROFESIONALES
+// ==========================================
+app.get('/api/professionals', async (req, res) => { 
+  const p = await prisma.professional.findMany({ orderBy: { id: 'asc' } }); 
+  res.json(p); 
+});
 
 app.post('/api/professionals', async (req, res) => {
   const { name, email, password, color, phone, slotInterval } = req.body;
   try { 
     const hp = await bcrypt.hash(password, 10); 
-    const n = await prisma.professional.create({ 
-      data: { name, email, password: hp, color, phone, slotInterval: parseInt(slotInterval) || 30 } 
-    }); 
+    const n = await prisma.professional.create({ data: { name, email, password: hp, color, phone, slotInterval: parseInt(slotInterval)||30 } }); 
     res.json(n); 
   } catch { res.status(500).json({ error: 'Err' }); }
 });
 
-app.put('/api/professionals/:id', async (req, res) => { 
-  const { name, email, color, phone, slotInterval } = req.body; 
+app.put('/api/professionals/:id', async (req, res) => {
+  const { name, email, color, phone, slotInterval } = req.body;
   try { 
-    const u = await prisma.professional.update({ 
-      where: { id: parseInt(req.params.id) }, 
-      data: { name, email, color, phone, slotInterval: parseInt(slotInterval) || 30 } 
-    }); 
+    const u = await prisma.professional.update({ where: { id: parseInt(req.params.id) }, data: { name, email, color, phone, slotInterval: parseInt(slotInterval)||30 } }); 
     res.json(u); 
+  } catch { res.status(500).json({ error: 'Err' }); }
+});
+
+app.delete('/api/professionals/:id', async (req, res) => { 
+  try { 
+    await prisma.professional.delete({ where: { id: parseInt(req.params.id) } }); 
+    res.json({ message: 'Deleted' }); 
   } catch { res.status(500).json({ error: 'Err' }); } 
 });
 
-app.delete('/api/professionals/:id', async (req, res) => { try { await prisma.professional.delete({ where: { id: parseInt(req.params.id) } }); res.json({ message: 'Deleted' }); } catch { res.status(500).json({ error: 'Err' }); } });
 app.post('/api/professionals/import', async (req, res) => {
-  const { data } = req.body; let c=0; for(const i of data) { try { const hp = await bcrypt.hash(i.password||'cisd123',10); await prisma.professional.create({ data: { name:i.name, email:i.email, password:hp, phone:i.phone||'', color:i.color||'#3788d8', slotInterval: parseInt(i.slotInterval)||30 } }); c++; } catch {} } res.json({ message: `Procesados: ${c}` });
+  const { data } = req.body; 
+  let c=0; 
+  for(const i of data) { 
+    try { 
+      const hp = await bcrypt.hash(i.password||'cisd123',10); 
+      await prisma.professional.create({ data: { name:i.name, email:i.email, password:hp, phone:i.phone||'', color:i.color||'#3788d8', slotInterval: parseInt(i.slotInterval)||30 } }); 
+      c++; 
+    } catch {} 
+  } 
+  res.json({ message: `Procesados: ${c}` });
 });
-app.get('/api/professionals/export', async (req, res) => { const p = await prisma.professional.findMany(); let csv='name,email,phone,color,slotInterval\n'; p.forEach(x=>csv+=`"${x.name}","${x.email}","${x.phone||''}","${x.color}",${x.slotInterval}\n`); res.header('Content-Type','text/csv').attachment('profesionales.csv').send(csv); });
 
-// --- SERVICIOS (TRATAMIENTOS) ---
+app.get('/api/professionals/export', async (req, res) => { 
+  const p = await prisma.professional.findMany(); 
+  let csv='name,email,phone,color,slotInterval\n'; 
+  p.forEach(x=>csv+=`"${x.name}","${x.email}","${x.phone||''}","${x.color}",${x.slotInterval}\n`); 
+  res.header('Content-Type','text/csv').attachment('profesionales.csv').send(csv); 
+});
+
+// ==========================================
+//               CRUD SERVICIOS
+// ==========================================
 app.get('/api/services', async (req, res) => { 
   const s = await prisma.service.findMany({ orderBy: { name: 'asc' } }); 
   res.json(s); 
 });
+
 app.post('/api/services', async (req, res) => {
   const { category, specialty, name, code, price, discountValue, description, durationMin, isTelemed } = req.body;
-  try {
-    const n = await prisma.service.create({
-      data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed: isTelemed||false }
-    });
-    res.json(n);
-  } catch { res.status(500).json({ error: 'Error crear servicio' }); }
+  try { 
+    const n = await prisma.service.create({ data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed: isTelemed||false } }); 
+    res.json(n); 
+  } catch { res.status(500).json({ error: 'Error' }); }
 });
+
 app.put('/api/services/:id', async (req, res) => {
   const { category, specialty, name, code, price, discountValue, description, durationMin, isTelemed } = req.body;
-  try {
-    const u = await prisma.service.update({
-      where: { id: parseInt(req.params.id) },
-      data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed }
-    });
-    res.json(u);
-  } catch { res.status(500).json({ error: 'Error actualizar servicio' }); }
+  try { 
+    const u = await prisma.service.update({ where: { id: parseInt(req.params.id) }, data: { category, specialty, name, code, price: parseInt(price)||0, discountValue: parseInt(discountValue)||0, description, durationMin: parseInt(durationMin)||30, isTelemed } }); 
+    res.json(u); 
+  } catch { res.status(500).json({ error: 'Error' }); }
 });
-app.delete('/api/services/:id', async (req, res) => { try { await prisma.service.delete({ where: { id: parseInt(req.params.id) } }); res.json({ message: 'Deleted' }); } catch { res.status(500).json({ error: 'Err' }); } });
 
-// IMPORTAR (Permite duplicados de código)
+app.delete('/api/services/:id', async (req, res) => { 
+  try { 
+    await prisma.service.delete({ where: { id: parseInt(req.params.id) } }); 
+    res.json({ message: 'Deleted' }); 
+  } catch { res.status(500).json({ error: 'Err' }); } 
+});
+
 app.post('/api/services/import', async (req, res) => { 
   const { data } = req.body; 
   let c=0; 
@@ -221,167 +276,240 @@ app.post('/api/services/import', async (req, res) => {
           code: i.code || `GEN-${Date.now()}`, 
           durationMin: parseInt(i.durationMin)||30, 
           price: parseInt(i.price)||0, 
-          discountValue: parseInt(i.discountValue)||0,
+          discountValue: parseInt(i.discountValue)||0, 
           isTelemed: (isT==='true'||isT==='si'), 
           category: i.category||'General', 
-          specialty: i.specialty||'',
-          description: i.description||''
+          specialty: i.specialty||'', 
+          description: i.description||'' 
         } 
       }); 
       c++; 
-    } catch (e) {
-      console.error("Error importando servicio:", i.name, e);
-    } 
+    } catch (e) { console.error("Error importando:", i.name); } 
   } 
   res.json({ message: `Procesados: ${c}` }); 
 });
 
 app.get('/api/services/export', async (req, res) => { 
   const s = await prisma.service.findMany(); 
-  let csv = '\ufeffcategoria,especialidad,nombre,codigo,precio,valor_descuento,descripcion\n'; 
-  s.forEach(x => {
-    const desc = x.description ? x.description.replace(/"/g, '""').replace(/\n/g, ' ') : '';
-    const priceFmt = '$' + x.price.toLocaleString('es-CL');
-    const discountFmt = x.discountValue > 0 ? '$' + x.discountValue.toLocaleString('es-CL') : '0';
-    csv += `"${x.category||''}","${x.specialty||''}","${x.name}","${x.code}","${priceFmt}","${discountFmt}","${desc}"\n`; 
+  let csv='categoria,especialidad,nombre,codigo,precio,valor_descuento,descripcion\n'; 
+  s.forEach(x => { 
+    const desc = x.description ? x.description.replace(/"/g, '""') : ''; 
+    const p = '$' + x.price; 
+    const d = x.discountValue > 0 ? '$' + x.discountValue : '0'; 
+    csv += `"${x.category||''}","${x.specialty||''}","${x.name}","${x.code}","${p}","${d}","${desc}"\n`; 
   }); 
-  res.header('Content-Type','text/csv').attachment('servicios_tratamientos.csv').send(csv); 
+  res.header('Content-Type','text/csv').attachment('servicios.csv').send(csv); 
 });
 
-// --- HORARIOS ---
-app.get('/api/availability/:pid', async (req, res) => { const s = await prisma.availability.findMany({ where: { professionalId: parseInt(req.params.pid) } }); res.json(s); });
+// --- HORARIOS (AVAILABILITY) ---
+app.get('/api/availability/:pid', async (req, res) => { 
+  const s = await prisma.availability.findMany({ where: { professionalId: parseInt(req.params.pid) } }); 
+  res.json(s); 
+});
+
 app.post('/api/availability', async (req, res) => {
-  const { professionalId, schedules } = req.body; try { await prisma.availability.deleteMany({ where: { professionalId: parseInt(professionalId) } }); if(schedules.length>0) await Promise.all(schedules.map(s => prisma.availability.create({ data: { professionalId: parseInt(professionalId), dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime } }))); res.json({ message: 'OK' }); } catch { res.status(500).json({ error: 'Err' }); }
+  const { professionalId, schedules } = req.body; 
+  try { 
+    await prisma.availability.deleteMany({ where: { professionalId: parseInt(professionalId) } }); 
+    if(schedules.length > 0) {
+      await Promise.all(schedules.map(s => prisma.availability.create({ 
+        data: { professionalId: parseInt(professionalId), dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime } 
+      })));
+    }
+    res.json({ message: 'OK' }); 
+  } catch { res.status(500).json({ error: 'Err' }); }
 });
 
-// --- CITAS Y BLOQUEOS ---
+// ==========================================
+//           CITAS Y AGENDAMIENTO
+// ==========================================
 app.get('/api/appointments', async (req, res) => {
   const { professionalId, start, end } = req.query;
-  try { const appts = await prisma.appointment.findMany({ where: { professionalId: parseInt(professionalId), startTime: { gte: new Date(start) }, endTime: { lte: new Date(end) } }, include: { patient: true, service: true } }); res.json(appts); } catch { res.status(500).json({ error: 'Err' }); }
+  try { 
+    const appts = await prisma.appointment.findMany({ 
+      where: { professionalId: parseInt(professionalId), startTime: { gte: new Date(start) }, endTime: { lte: new Date(end) } }, 
+      include: { patient: true, service: true } 
+    }); 
+    res.json(appts); 
+  } catch { res.status(500).json({ error: 'Err' }); }
 });
 
 app.post('/api/appointments', async (req, res) => {
   const { 
     professionalId, serviceId, startTime, endTime, 
     rut, name, email, phone, address, prevision, birthDate,
-    type, title // 'BLOCK' o 'APPOINTMENT'
+    type, title 
   } = req.body;
 
   try {
-    // A. CASO BLOQUEO (ADMINISTRATIVO)
+    // --- TIPO: BLOQUEO ---
     if (type === 'BLOCK') {
-      const start = new Date(startTime);
+      const start = new Date(startTime); 
       const end = new Date(endTime);
-      const conflict = await prisma.appointment.findFirst({
-        where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] }
+      
+      const conflict = await prisma.appointment.findFirst({ 
+        where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] } 
       });
-      if (conflict) return res.status(409).json({ error: 'Ya existe una cita o bloqueo en ese horario.' });
-
-      const block = await prisma.appointment.create({
-        data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), status: 'BLOCKED', title: title || 'Horario No Disponible' }
+      if (conflict) return res.status(409).json({ error: 'Conflicto de horario' });
+      
+      const block = await prisma.appointment.create({ 
+        data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), status: 'BLOCKED', title: title || 'Bloqueo' } 
       });
       return res.json(block);
     }
 
-    // B. CASO CITA NORMAL (PACIENTE)
+    // --- TIPO: CITA PACIENTE ---
     const s = await prisma.service.findUnique({ where: { id: parseInt(serviceId) } });
-    if (!s) return res.status(404).json({ error: 'Service not found' });
+    if (!s) return res.status(404).json({ error: 'Servicio no encontrado' });
 
     const start = new Date(startTime);
     const end = new Date(start.getTime() + s.durationMin * 60000);
 
-    const conflict = await prisma.appointment.findFirst({
-        where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] }
+    // Validación de conflicto (Lógica 15 min)
+    const existing = await prisma.appointment.findMany({
+      where: { professionalId: parseInt(professionalId), status: { not: 'CANCELLED' }, AND: [ { startTime: { lt: end } }, { endTime: { gt: start } } ] }
     });
-    if (conflict) return res.status(409).json({ error: 'Horario ocupado.' });
+    
+    const isActuallyBusy = existing.some(appt => {
+        if (appt.status === 'CONFIRMED' || appt.status === 'BLOCKED') return true;
+        if (appt.status === 'PENDING_PAYMENT') {
+             const mins = (new Date() - new Date(appt.createdAt)) / 60000;
+             return mins < 15; 
+        }
+        return false;
+    });
+
+    if (isActuallyBusy) return res.status(409).json({ error: 'Horario ya ocupado por otra persona.' });
 
     let p = await prisma.patient.upsert({
       where: { rut: rut },
-      update: { name, email, phone, address: address || null, prevision: prevision || null, birthDate: birthDate ? new Date(birthDate) : null },
-      create: { rut, name, email, phone, address: address || null, prevision: prevision || null, birthDate: birthDate ? new Date(birthDate) : null }
+      update: { name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null },
+      create: { rut, name, email, phone, address: address||null, prevision: prevision||null, birthDate: birthDate ? new Date(birthDate) : null }
     });
     
-    // --- GOOGLE MEET LOGIC ---
-    let meetLink = null, googleEventId = null;
+    // Si vale $0, se confirma directo. Si no, pendiente.
+    const initialStatus = s.price > 0 ? 'PENDING_PAYMENT' : 'CONFIRMED';
+
+    const appt = await prisma.appointment.create({
+      data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), patientId: p.id, serviceId: s.id, price: s.price, paymentStatus: 'PENDING', status: initialStatus }
+    });
+
+    // Crear Meet
+    let meetLink = null;
     if (s.isTelemed || s.name.toLowerCase().includes('tele')) {
-      try {
+       try {
         const gRes = await calendar.events.insert({
-          calendarId: 'primary', 
-          conferenceDataVersion: 1,
-          requestBody: { 
-            summary: `Cita CISD: ${name} - ${s.name}`, 
-            description: `Cita con ${s.name}. Paciente: ${name}`, 
-            start: { dateTime: start.toISOString() }, 
-            end: { dateTime: end.toISOString() }, 
-            conferenceData: { createRequest: { requestId: "cisd-" + Date.now(), conferenceSolutionKey: { type: "hangoutsMeet" } } }, 
-            attendees: [{ email }] 
-          }
+          calendarId: 'primary', conferenceDataVersion: 1,
+          requestBody: { summary: `Cita CISD: ${name} - ${s.name}`, description: `Paciente: ${name}`, start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() }, conferenceData: { createRequest: { requestId: "cisd-" + Date.now(), conferenceSolutionKey: { type: "hangoutsMeet" } } }, attendees: [{ email }] }
         });
         meetLink = gRes.data.hangoutLink; 
-        googleEventId = gRes.data.id;
-      } catch (e) { 
-        console.error('Google Error', e); 
-      }
+        await prisma.appointment.update({ where: { id: appt.id }, data: { meetLink, googleEventId: gRes.data.id } });
+      } catch {}
     }
 
-    // --- MERCADO PAGO LOGIC ---
-    let preferenceId = null; let paymentLink = null;
+    // Crear Preferencia MercadoPago
+    let paymentLink = null;
     if (s.price > 0 && client) {
       try {
         const preference = new Preference(client);
         const result = await preference.create({
           body: { 
-            items: [{ title: `Consulta: ${s.name}`, quantity: 1, unit_price: s.price }], 
+            items: [{ title: s.name, quantity: 1, unit_price: s.price }], 
             payer: { email: email, name: name }, 
-            back_urls: { 
-              success: "https://agenda-cisd-web.onrender.com/", 
-              failure: "https://agenda-cisd-web.onrender.com/", 
-              pending: "https://agenda-cisd-web.onrender.com/" 
-            }, 
-            auto_return: "approved" 
+            external_reference: String(appt.id),
+            back_urls: { success: "https://agenda-cisd-web.onrender.com/", failure: "https://agenda-cisd-web.onrender.com/", pending: "https://agenda-cisd-web.onrender.com/" }, 
+            auto_return: "approved",
+            notification_url: "https://cisd-api.onrender.com/api/webhook/mercadopago"
           }
         });
-        preferenceId = result.id; 
         paymentLink = result.init_point;
-      } catch (mpError) { 
-        console.error("Error MP:", mpError); 
-      }
+        await prisma.appointment.update({ where: { id: appt.id }, data: { mpPreferenceId: result.id } });
+      } catch (mpError) { console.error("Error MP:", mpError); }
     }
 
-    const appt = await prisma.appointment.create({
-      data: { startTime: start, endTime: end, professionalId: parseInt(professionalId), patientId: p.id, serviceId: s.id, meetLink, googleEventId, price: s.price, mpPreferenceId: preferenceId, paymentStatus: 'PENDING' }
-    });
     res.json({ ...appt, paymentLink });
-  } catch (error) { res.status(500).json({ error: 'Error creating appt' }); }
+  } catch (error) { console.error(error); res.status(500).json({ error: 'Error creating appt' }); }
 });
 
+// --- NUEVO: WEBHOOK MERCADOPAGO ---
+app.post('/api/webhook/mercadopago', async (req, res) => {
+  const { query } = req;
+  const topic = query.topic || query.type;
+
+  try {
+    if (topic === 'payment') {
+      const paymentId = query.id || query['data.id'];
+      const payment = new Payment(client);
+      const paymentData = await payment.get({ id: paymentId });
+      
+      if (paymentData.status === 'approved') {
+        const appointmentId = parseInt(paymentData.external_reference);
+        
+        await prisma.appointment.update({
+          where: { id: appointmentId },
+          data: { 
+            status: 'CONFIRMED', 
+            paymentStatus: 'PAID', 
+            mpPaymentId: String(paymentId) 
+          }
+        });
+        console.log(`✅ Cita #${appointmentId} confirmada por pago.`);
+      }
+    }
+    res.sendStatus(200);
+  } catch (error) {
+    console.error('Webhook Error:', error);
+    res.sendStatus(500);
+  }
+});
+
+// --- ACTUALIZAR CITA ---
 app.put('/api/appointments/:id', async (req, res) => {
   const { id } = req.params;
   const { newStartTime, clinicalNote, paymentStatus, paymentMethod } = req.body;
   try {
     const appointment = await prisma.appointment.findUnique({ where: { id: parseInt(id) }, include: { service: true } });
     if (!appointment) return res.status(404).json({ error: 'Not found' });
+    
     const dataToUpdate = {};
+    
     if (newStartTime) {
       const newStart = new Date(newStartTime);
       const duration = appointment.endTime.getTime() - appointment.startTime.getTime();
       const newEnd = new Date(newStart.getTime() + duration);
-      dataToUpdate.startTime = newStart; dataToUpdate.endTime = newEnd;
-      if (appointment.googleEventId) { try { await calendar.events.patch({ calendarId: 'primary', eventId: appointment.googleEventId, requestBody: { start: { dateTime: newStart }, end: { dateTime: newEnd } } }); } catch {} }
+      dataToUpdate.startTime = newStart; 
+      dataToUpdate.endTime = newEnd;
+      
+      if (appointment.googleEventId) { 
+        try { 
+          await calendar.events.patch({ 
+            calendarId: 'primary', 
+            eventId: appointment.googleEventId, 
+            requestBody: { start: { dateTime: newStart }, end: { dateTime: newEnd } } 
+          }); 
+        } catch {} 
+      }
     }
+    
     if (clinicalNote !== undefined) dataToUpdate.clinicalNote = clinicalNote;
     if (paymentStatus) dataToUpdate.paymentStatus = paymentStatus;
     if (paymentMethod) dataToUpdate.paymentMethod = paymentMethod;
+    
     const updated = await prisma.appointment.update({ where: { id: parseInt(id) }, data: dataToUpdate });
     res.json(updated);
   } catch { res.status(500).json({ error: 'Error update' }); }
 });
 
+// --- ELIMINAR CITA ---
 app.delete('/api/appointments/:id', async (req, res) => {
   const { id } = req.params;
   try {
     const appt = await prisma.appointment.findUnique({ where: { id: parseInt(id) } });
-    if (appt && appt.googleEventId) { try { await calendar.events.delete({ calendarId: 'primary', eventId: appt.googleEventId }); } catch {} }
+    if (appt && appt.googleEventId) { 
+      try { 
+        await calendar.events.delete({ calendarId: 'primary', eventId: appt.googleEventId }); 
+      } catch {} 
+    }
     await prisma.appointment.delete({ where: { id: parseInt(id) } });
     res.json({ message: 'Deleted' });
   } catch { res.status(500).json({ error: 'Error delete' }); }

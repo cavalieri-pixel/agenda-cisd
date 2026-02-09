@@ -22,20 +22,15 @@ model Professional {
 
 model Service {
   id            Int           @id @default(autoincrement())
-  
   category      String?       @default("General")
   specialty     String?       
   name          String
-  
-  // SIN @unique PARA PERMITIR CÓDIGOS FONASA REPETIDOS
-  code          String        
-  
+  code          String        // SIN @unique (Permite Fonasa repetidos)
   price         Int
   discountValue Int           @default(0)
   description   String?       @db.Text
   durationMin   Int           @default(30)
   isTelemed     Boolean       @default(false)
-  
   appointments  Appointment[]
 }
 

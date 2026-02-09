@@ -54,7 +54,7 @@ const parseCSV = (text) => {
 };
 
 // =========================================================
-// 1. VISTA DE TRATAMIENTOS (SERVICIOS)
+// 1. VISTA DE TRATAMIENTOS (JERÁRQUICA: CAT -> ESP -> SERV)
 // =========================================================
 export function ServicesView() {
   const [services, setServices] = useState([]);
@@ -88,25 +88,20 @@ export function ServicesView() {
 
   const handleEdit = (service) => { setEditingService(service); setFormData(service); setIsModalOpen(true); };
   const handleDelete = async (id) => { if (confirm('¿Eliminar?')) { try { await axios.delete(`${API_URL}/services/${id}`); loadServices(); } catch { alert("Tiene citas asociadas."); } } };
-
-  // CSV
   const handleExport = () => { axios.get(`${API_URL}/services/export`).then(res => downloadCSV(res.data, 'tratamientos_cisd.csv')); };
   
   const handleImport = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
-    
     reader.onload = async (evt) => {
       try {
-        setIsUploading(true); 
-        setUploadProgress(10);
-
+        setIsUploading(true); setUploadProgress(10);
         const rawData = parseCSV(evt.target.result);
         const formatted = rawData.map(d => {
           const cleanPrice = (val) => parseInt((val || '').replace(/[^0-9]/g, '')) || 0;
           return {
             category: d.categoria || d.category || 'General',
-            specialty: d.especialidad || d.specialty || '',
+            specialty: d.especialidad || d.specialty || 'General',
             name: d.nombre || d.name || '',
             code: d.codigo || d.code || `GEN-${Math.random().toString(36).substr(2, 5)}`,
             price: cleanPrice(d.precio || d.price),
@@ -116,120 +111,150 @@ export function ServicesView() {
             durationMin: 30 
           };
         });
-
         const res = await axios.post(`${API_URL}/services/import`, { data: formatted }, {
-          onUploadProgress: (progressEvent) => {
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            setUploadProgress(percentCompleted > 90 ? 90 : percentCompleted);
-          }
+          onUploadProgress: (p) => setUploadProgress(Math.round((p.loaded * 100) / p.total) > 90 ? 90 : Math.round((p.loaded * 100) / p.total))
         });
-
-        setUploadProgress(100); 
-        await new Promise(r => setTimeout(r, 500)); 
-
-        alert(`✅ Importación completada.\n${res.data.message}`);
-        loadServices();
-      } catch (err) {
-        console.error(err);
-        alert('❌ Error al procesar el archivo CSV.');
-      } finally {
-        setIsUploading(false);
-        setUploadProgress(0);
-        e.target.value = null; 
-      }
+        setUploadProgress(100); await new Promise(r => setTimeout(r, 500));
+        alert(`✅ Importación completada.\n${res.data.message}`); loadServices();
+      } catch (err) { alert('❌ Error CSV.'); } finally { setIsUploading(false); setUploadProgress(0); e.target.value = null; }
     };
     reader.readAsText(file);
   };
 
+  // LÓGICA DE AGRUPACIÓN (Categoría -> Especialidad -> Servicios)
+  const groupedServices = services.reduce((acc, service) => {
+    const cat = service.category || 'Sin Categoría';
+    const spec = service.specialty || 'General';
+    
+    if (!acc[cat]) acc[cat] = {};
+    if (!acc[cat][spec]) acc[cat][spec] = [];
+    
+    acc[cat][spec].push(service);
+    return acc;
+  }, {});
+
   return (
     <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-800">Tratamientos y Servicios</h2>
+      {/* HEADER */}
+      <div className="flex justify-between items-center mb-8 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800">Tratamientos y Servicios</h2>
+          <p className="text-sm text-gray-500">{services.length} servicios cargados</p>
+        </div>
         <div className="flex gap-2">
-          <button onClick={handleExport} className="bg-green-600 text-white px-3 py-2 rounded text-sm hover:bg-green-700 flex items-center gap-2">
-             ⬇ Exportar CSV
-          </button>
-          <label className="bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700 cursor-pointer flex items-center gap-2">
-             ⬆ Importar CSV
-            <input type="file" className="hidden" accept=".csv" onChange={handleImport} />
-          </label>
-          <button onClick={() => { setEditingService(null); setFormData({ category: '', specialty: '', name: '', code: '', price: 0, discountValue: 0, description: '', durationMin: 30, isTelemed: false }); setIsModalOpen(true); }} className="bg-teal-600 text-white px-4 py-2 rounded-lg font-bold">+ Nuevo</button>
+          <button onClick={handleExport} className="bg-green-50 text-green-700 border border-green-200 px-3 py-2 rounded text-sm hover:bg-green-100 flex items-center gap-2 font-bold">⬇ CSV</button>
+          <label className="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-2 rounded text-sm hover:bg-blue-100 cursor-pointer flex items-center gap-2 font-bold">⬆ CSV<input type="file" className="hidden" accept=".csv" onChange={handleImport} /></label>
+          <button onClick={() => { setEditingService(null); setFormData({ category: '', specialty: '', name: '', code: '', price: 0, discountValue: 0, description: '', durationMin: 30, isTelemed: false }); setIsModalOpen(true); }} className="bg-teal-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-teal-700 shadow-md flex items-center gap-2">+ Nuevo</button>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow border overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-gray-50 border-b">
-            <tr>
-              <th className="p-4 text-gray-600">Código</th>
-              <th className="p-4 text-gray-600">Nombre</th>
-              <th className="p-4 text-gray-600">Cat/Esp</th>
-              <th className="p-4 text-gray-600">Precio</th>
-              <th className="p-4 text-gray-600">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {services.map(s => (
-              <tr key={s.id} className="border-b hover:bg-gray-50">
-                <td className="p-4 font-mono text-sm text-gray-500">{s.code}</td>
-                <td className="p-4 font-bold text-gray-800">{s.name}</td>
-                <td className="p-4 text-sm"><span className="block font-bold text-teal-700">{s.specialty}</span><span className="text-xs text-gray-500">{s.category}</span></td>
-                <td className="p-4 text-gray-700">${s.price.toLocaleString('es-CL')}</td>
-                <td className="p-4">
-                  <button onClick={() => handleEdit(s)} className="text-blue-600 hover:underline mr-3">Editar</button>
-                  <button onClick={() => handleDelete(s.id)} className="text-red-600 hover:underline">Eliminar</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* VISTA JERÁRQUICA */}
+      <div className="space-y-8">
+        {Object.entries(groupedServices).map(([category, specialties]) => (
+          <div key={category} className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+            
+            {/* NIVEL 1: CATEGORÍA */}
+            <div className="bg-teal-700 p-4 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white tracking-wide uppercase flex items-center gap-2">📂 {category}</h3>
+              <span className="bg-teal-800 text-teal-100 text-xs px-2 py-1 rounded-full font-bold">{Object.values(specialties).flat().length} servicios</span>
+            </div>
+
+            {/* CONTENEDOR DE ESPECIALIDADES */}
+            <div className="p-4 space-y-6 bg-gray-50">
+              {Object.entries(specialties).map(([specialty, items]) => (
+                <div key={specialty} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  
+                  {/* NIVEL 2: ESPECIALIDAD */}
+                  <div className="bg-gray-100 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                    <h4 className="text-lg font-bold text-gray-700 flex items-center gap-2">🔹 {specialty}</h4>
+                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{items.length} items</span>
+                  </div>
+
+                  {/* NIVEL 3: TABLA DE SERVICIOS */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead className="bg-white text-gray-400 text-xs uppercase border-b">
+                        <tr>
+                          <th className="px-4 py-2 font-semibold">Código</th>
+                          <th className="px-4 py-2 font-semibold">Nombre del Tratamiento</th>
+                          <th className="px-4 py-2 font-semibold text-right">Precio</th>
+                          <th className="px-4 py-2 font-semibold text-right">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {items.map(s => (
+                          <tr key={s.id} className="hover:bg-teal-50 transition-colors group">
+                            <td className="px-4 py-3 font-mono text-xs text-gray-500">{s.code}</td>
+                            <td className="px-4 py-3">
+                              <p className="font-bold text-gray-800 text-sm">{s.name}</p>
+                              {s.description && <p className="text-xs text-gray-400 italic mt-1 line-clamp-1">{s.description}</p>}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <div className="font-bold text-gray-700">${s.price.toLocaleString('es-CL')}</div>
+                              {s.discountValue > 0 && <div className="text-xs text-red-500 font-bold">Desc: -${s.discountValue.toLocaleString('es-CL')}</div>}
+                            </td>
+                            <td className="px-4 py-3 text-right opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => handleEdit(s)} className="text-blue-600 hover:text-blue-800 text-xs font-bold mr-3 uppercase">Editar</button>
+                              <button onClick={() => handleDelete(s.id)} className="text-red-500 hover:text-red-700 text-xs font-bold uppercase">Borrar</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        
+        {services.length === 0 && (
+          <div className="text-center py-20 text-gray-400 bg-gray-50 rounded-xl border-dashed border-2 border-gray-200">
+            <p className="text-xl">No hay servicios cargados.</p>
+            <p className="text-sm">Usa el botón "Importar CSV" o crea uno nuevo.</p>
+          </div>
+        )}
       </div>
 
+      {/* MODAL DE EDICIÓN */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-xl w-full max-w-2xl shadow-2xl h-[90vh] overflow-y-auto">
-            <h3 className="text-xl font-bold mb-4">{editingService ? 'Editar' : 'Nuevo'} Tratamiento</h3>
+            <h3 className="text-xl font-bold mb-4 text-teal-800">{editingService ? 'Editar' : 'Nuevo'} Tratamiento</h3>
             <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
-              <div className="col-span-1"><label className="block text-xs font-bold mb-1">Categoría</label><input required className="w-full p-2 border rounded" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} /></div>
-              <div className="col-span-1"><label className="block text-xs font-bold mb-1">Especialidad</label><input required className="w-full p-2 border rounded" value={formData.specialty} onChange={e => setFormData({...formData, specialty: e.target.value})} /></div>
-              <div className="col-span-2"><label className="block text-xs font-bold mb-1">Nombre</label><input required className="w-full p-2 border rounded" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
-              <div className="col-span-1"><label className="block text-xs font-bold mb-1">Código</label><input required className="w-full p-2 border rounded" value={formData.code} onChange={e => setFormData({...formData, code: e.target.value})} /></div>
-              <div className="col-span-1"><label className="block text-xs font-bold mb-1">Duración (min)</label><input type="number" className="w-full p-2 border rounded" value={formData.durationMin} onChange={e => setFormData({...formData, durationMin: e.target.value})} /></div>
-              <div className="col-span-1"><label className="block text-xs font-bold mb-1">Precio ($)</label><input type="number" required className="w-full p-2 border rounded" value={formData.price} onChange={e => setFormData({...formData, price: e.target.value})} /></div>
-              <div className="col-span-1"><label className="block text-xs font-bold text-red-600 mb-1">Descuento ($)</label><input type="number" className="w-full p-2 border rounded bg-red-50" value={formData.discountValue} onChange={e => setFormData({...formData, discountValue: e.target.value})} /></div>
-              <div className="col-span-2"><label className="block text-xs font-bold mb-1">Descripción</label><textarea className="w-full p-2 border rounded h-24" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})}></textarea></div>
-              <div className="col-span-2 flex items-center gap-2"><input type="checkbox" checked={formData.isTelemed} onChange={e => setFormData({...formData, isTelemed: e.target.checked})} /><span className="text-sm">¿Es Telemedicina?</span></div>
-              <div className="col-span-2 flex gap-3 mt-4"><button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 border rounded">Cancelar</button><button type="submit" className="flex-1 py-3 bg-teal-600 text-white rounded font-bold">Guardar</button></div>
+              <div className="col-span-1"><label className="block text-xs font-bold mb-1 text-gray-600">Categoría</label><input required className="w-full p-2 border rounded bg-gray-50" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} placeholder="Ej: Fonoaudiología" /></div>
+              <div className="col-span-1"><label className="block text-xs font-bold mb-1 text-gray-600">Especialidad</label><input required className="w-full p-2 border rounded bg-gray-50" value={formData.specialty} onChange={e => setFormData({...formData, specialty: e.target.value})} placeholder="Ej: Adulto" /></div>
+              <div className="col-span-2"><label className="block text-xs font-bold mb-1 text-gray-600">Nombre</label><input required className="w-full p-2 border rounded" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
+              <div className="col-span-1"><label className="block text-xs font-bold mb-1 text-gray-600">Código</label><input required className="w-full p-2 border rounded font-mono" value={formData.code} onChange={e => setFormData({...formData, code: e.target.value})} /></div>
+              <div className="col-span-1"><label className="block text-xs font-bold mb-1 text-gray-600">Duración (min)</label><input type="number" className="w-full p-2 border rounded" value={formData.durationMin} onChange={e => setFormData({...formData, durationMin: e.target.value})} /></div>
+              <div className="col-span-1"><label className="block text-xs font-bold mb-1 text-gray-600">Precio ($)</label><input type="number" required className="w-full p-2 border rounded font-bold text-gray-700" value={formData.price} onChange={e => setFormData({...formData, price: e.target.value})} /></div>
+              <div className="col-span-1"><label className="block text-xs font-bold text-red-600 mb-1">Descuento ($)</label><input type="number" className="w-full p-2 border rounded bg-red-50 text-red-600" value={formData.discountValue} onChange={e => setFormData({...formData, discountValue: e.target.value})} /></div>
+              <div className="col-span-2"><label className="block text-xs font-bold mb-1 text-gray-600">Descripción</label><textarea className="w-full p-2 border rounded h-24 text-sm" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})}></textarea></div>
+              <div className="col-span-2 flex items-center gap-2"><input type="checkbox" checked={formData.isTelemed} onChange={e => setFormData({...formData, isTelemed: e.target.checked})} /><span className="text-sm font-bold text-gray-600">¿Es Telemedicina?</span></div>
+              <div className="col-span-2 flex gap-3 mt-4"><button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 border rounded text-gray-500 hover:bg-gray-50 font-bold">Cancelar</button><button type="submit" className="flex-1 py-3 bg-teal-600 text-white rounded font-bold hover:bg-teal-700">Guardar</button></div>
             </form>
           </div>
         </div>
       )}
 
-      {/* --- MODAL DE PROGRESO DE CARGA --- */}
+      {/* MODAL DE PROGRESO */}
       {isUploading && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[60]">
           <div className="bg-white p-8 rounded-xl shadow-2xl flex flex-col items-center max-w-sm w-full">
             <div className="w-16 h-16 border-4 border-gray-200 border-t-teal-600 rounded-full animate-spin mb-4"></div>
             <h3 className="text-xl font-bold text-gray-800 mb-2">Subiendo Archivo...</h3>
-            <p className="text-gray-500 text-sm mb-4 text-center">Procesando registros en la base de datos.<br/>Por favor no cierres esta ventana.</p>
-            
-            <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
-              <div 
-                className="bg-teal-600 h-full transition-all duration-300 ease-out"
-                style={{ width: `${uploadProgress}%` }}
-              ></div>
-            </div>
+            <p className="text-gray-500 text-sm mb-4 text-center">Organizando categorías...</p>
+            <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden"><div className="bg-teal-600 h-full transition-all duration-300 ease-out" style={{ width: `${uploadProgress}%` }}></div></div>
             <span className="text-teal-700 font-bold mt-2">{uploadProgress}%</span>
           </div>
         </div>
       )}
-
     </div>
   );
 }
 
 // =========================================================
-// 2. VISTA DE PACIENTES
+// 2. VISTA DE PACIENTES (COMPLETA)
 // =========================================================
 export function PatientsView() {
   const [patients, setPatients] = useState([]);
@@ -305,7 +330,7 @@ export function PatientsView() {
 }
 
 // =========================================================
-// 3. VISTA DE PROFESIONALES
+// 3. VISTA DE PROFESIONALES (COMPLETA)
 // =========================================================
 export function ProfessionalsView() {
   const [profs, setProfs] = useState([]);
@@ -354,7 +379,7 @@ export function ProfessionalsView() {
 }
 
 // =========================================================
-// 4. VISTA DE HORARIOS (CONFIGURACIÓN AVANZADA)
+// 4. VISTA DE HORARIOS (COMPLETA)
 // =========================================================
 export function ScheduleView() {
   const [profs, setProfs] = useState([]);

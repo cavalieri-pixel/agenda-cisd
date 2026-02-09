@@ -14,10 +14,7 @@ model Professional {
   password       String
   color          String         @default("#3788d8")
   phone          String?
-  
-  // Intervalo entre citas (minutos)
-  slotInterval   Int            @default(30) 
-
+  slotInterval   Int            @default(30)
   appointments   Appointment[]
   availabilities Availability[]
   createdAt      DateTime       @default(now())
@@ -26,16 +23,16 @@ model Professional {
 model Service {
   id            Int           @id @default(autoincrement())
   
-  // --- DATOS DE TRATAMIENTO ---
-  category      String?       @default("General") 
+  category      String?       @default("General")
   specialty     String?       
   name          String
-  code          String        @unique
+  
+  // SIN @unique PARA PERMITIR CÓDIGOS FONASA REPETIDOS
+  code          String        
+  
   price         Int
-  discountValue Int           @default(0) 
-  description   String?       @db.Text    
-  // --------------------------
-
+  discountValue Int           @default(0)
+  description   String?       @db.Text
   durationMin   Int           @default(30)
   isTelemed     Boolean       @default(false)
   
@@ -48,13 +45,9 @@ model Patient {
   name         String
   email        String
   phone        String?
-  
-  // --- DATOS PACIENTE ---
   address      String?
   prevision    String?       
   birthDate    DateTime?
-  // --------------------
-
   appointments Appointment[]
 }
 
@@ -62,24 +55,18 @@ model Appointment {
   id             Int          @id @default(autoincrement())
   startTime      DateTime
   endTime        DateTime
-  status         String       @default("CONFIRMED") // "CONFIRMED", "CANCELLED", "BLOCKED"
-  
-  // Nuevo: Título para el bloqueo (ej: "Almuerzo", "Vacaciones")
+  status         String       @default("CONFIRMED")
   title          String?      
-
   price          Int          @default(0)
   paymentStatus  String       @default("PENDING")
   paymentMethod  String?      
   mpPreferenceId String?      
   mpPaymentId    String?      
-
-  // Clínico
   clinicalNote   String?      @db.Text
-
+  
   professionalId Int
   professional   Professional @relation(fields: [professionalId], references: [id])
   
-  // RELACIONES OPCIONALES (Para permitir bloqueos sin paciente)
   patientId      Int?
   patient        Patient?     @relation(fields: [patientId], references: [id])
   
@@ -88,7 +75,6 @@ model Appointment {
 
   meetLink       String?
   googleEventId  String?
-
   createdAt      DateTime     @default(now())
 }
 
@@ -97,7 +83,6 @@ model Availability {
   dayOfWeek      Int
   startTime      String
   endTime        String
-  
   professionalId Int
   professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
 }

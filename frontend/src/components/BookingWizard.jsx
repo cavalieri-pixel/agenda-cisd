@@ -36,9 +36,18 @@ export default function BookingWizard() {
   const [professionals, setProfessionals] = useState([]);
   const [proSlots, setProSlots] = useState({});
 
-  // DATOS FORMULARIO
+  // DATOS FORMULARIO (Agregada 'commune')
   const [rut, setRut] = useState('');
-  const [patientData, setPatientData] = useState({ name: '', surname: '', email: '', phone: '', address: '', prevision: 'Fonasa', birthDate: '' });
+  const [patientData, setPatientData] = useState({ 
+    name: '', 
+    surname: '', 
+    email: '', 
+    phone: '', 
+    birthDate: '', 
+    address: '', 
+    commune: '', 
+    prevision: 'Fonasa' 
+  });
   
   // SELECCIONES DE NAVEGACIÓN
   const [selectedCategory, setSelectedCategory] = useState(null);
@@ -57,7 +66,7 @@ export default function BookingWizard() {
     setCalendarDays(getNextDays(14)); 
   }, []);
 
-  // --- LÓGICA DE AGRUPACIÓN (Categoría -> Especialidad -> Servicios) ---
+  // --- LÓGICA DE AGRUPACIÓN ---
   const groupedServices = useMemo(() => {
     return services.reduce((acc, service) => {
       const cat = service.category || 'General';
@@ -82,12 +91,14 @@ export default function BookingWizard() {
           ...res.data, 
           surname: res.data.name.split(' ').slice(1).join(' '), 
           name: res.data.name.split(' ')[0], 
-          birthDate: res.data.birthDate ? res.data.birthDate.split('T')[0] : '' 
+          birthDate: res.data.birthDate ? res.data.birthDate.split('T')[0] : '',
+          // Si ya existe la dirección combinada, intentamos separar comuna (opcional visualmente)
+          commune: '' // Dejamos vacía por seguridad si viene combinada
         }); 
-        setStep(3); // Salta directo a Categorías si ya existe
+        setStep(3); 
       } 
     } catch { 
-      setStep(2); // Si no existe, va al formulario de registro
+      setStep(2); // Nuevo paciente
     } finally { 
       setLoading(false); 
     }
@@ -97,7 +108,7 @@ export default function BookingWizard() {
     if (step > 1) setStep(step - 1);
   };
 
-  // Cargar disponibilidad cuando llegamos al paso del calendario (Paso 6)
+  // Cargar horas
   useEffect(() => { 
     if (step === 6 && selectedService) loadAllSlots(selectedDate); 
   }, [step, selectedDate, selectedService]);
@@ -122,6 +133,11 @@ export default function BookingWizard() {
 
   const handleFinalBooking = async () => {
     setLoading(true);
+    // Combinamos Dirección y Comuna para guardarlo en el campo 'address' de la DB
+    const finalAddress = patientData.commune 
+      ? `${patientData.address}, ${patientData.commune}`
+      : patientData.address;
+
     try {
       const res = await axios.post(`${API_URL}/appointments`, {
         professionalId: selectedPro.id,
@@ -131,7 +147,7 @@ export default function BookingWizard() {
         name: `${patientData.name} ${patientData.surname}`,
         email: patientData.email,
         phone: patientData.phone,
-        address: patientData.address,
+        address: finalAddress, 
         prevision: patientData.prevision,
         birthDate: patientData.birthDate
       });
@@ -162,7 +178,7 @@ export default function BookingWizard() {
           {step === 1 && (
             <div className="max-w-md mx-auto py-10">
               <h2 className="text-2xl font-bold mb-6 text-center text-gray-800">Bienvenido/a</h2>
-              <p className="text-center text-gray-500 mb-6">Ingrese su RUT para comenzar la reserva</p>
+              <p className="text-center text-gray-500 mb-6">Ingrese su RUT para comenzar</p>
               <input 
                 className="border-2 border-gray-200 p-4 w-full mb-6 rounded-xl text-center text-xl tracking-wider font-mono focus:border-teal-500 outline-none transition" 
                 placeholder="12.345.678-9" 
@@ -175,21 +191,76 @@ export default function BookingWizard() {
             </div>
           )}
 
-          {/* PASO 2: DATOS NUEVO PACIENTE */}
+          {/* PASO 2: DATOS NUEVO PACIENTE (FORMULARIO ACTUALIZADO) */}
           {step === 2 && (
             <div>
-              <h2 className="text-xl font-bold mb-6 border-b pb-4">Datos del Paciente</h2>
+              <h2 className="text-xl font-bold mb-6 border-b pb-4 text-teal-800">Datos del Paciente</h2>
+              
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <input className="border p-3 rounded-lg" placeholder="Nombre" value={patientData.name} onChange={e=>setPatientData({...patientData,name:e.target.value})}/>
-                <input className="border p-3 rounded-lg" placeholder="Apellido" value={patientData.surname} onChange={e=>setPatientData({...patientData,surname:e.target.value})}/>
-                <input className="border p-3 rounded-lg" placeholder="Email" value={patientData.email} onChange={e=>setPatientData({...patientData,email:e.target.value})}/>
-                <input className="border p-3 rounded-lg" placeholder="Teléfono (+569...)" value={patientData.phone} onChange={e=>setPatientData({...patientData,phone:e.target.value})}/>
+                {/* 1. Nombre */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Nombre</label>
+                  <input className="border p-3 rounded-lg w-full" placeholder="Ej: Juan" value={patientData.name} onChange={e=>setPatientData({...patientData,name:e.target.value})}/>
+                </div>
+                
+                {/* 2. Apellido */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Apellido</label>
+                  <input className="border p-3 rounded-lg w-full" placeholder="Ej: Pérez" value={patientData.surname} onChange={e=>setPatientData({...patientData,surname:e.target.value})}/>
+                </div>
+
+                {/* 3. Email */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Email</label>
+                  <input className="border p-3 rounded-lg w-full" type="email" placeholder="nombre@mail.com" value={patientData.email} onChange={e=>setPatientData({...patientData,email:e.target.value})}/>
+                </div>
+
+                {/* 4. Teléfono */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Teléfono</label>
+                  <input className="border p-3 rounded-lg w-full" placeholder="+569 1234 5678" value={patientData.phone} onChange={e=>setPatientData({...patientData,phone:e.target.value})}/>
+                </div>
+
+                {/* 5. Fecha Nacimiento */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Fecha de Nacimiento</label>
+                  <input type="date" className="border p-3 rounded-lg w-full text-gray-600" value={patientData.birthDate} onChange={e=>setPatientData({...patientData,birthDate:e.target.value})}/>
+                </div>
+
+                {/* 6. Previsión */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Previsión</label>
+                  <select className="border p-3 rounded-lg w-full bg-white" value={patientData.prevision} onChange={e=>setPatientData({...patientData,prevision:e.target.value})}>
+                    <option value="Fonasa">Fonasa</option>
+                    <option value="Isapre">Isapre</option>
+                    <option value="Particular">Particular</option>
+                  </select>
+                </div>
+
+                {/* 7. Dirección */}
+                <div className="md:col-span-1">
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Dirección (Calle y Número)</label>
+                  <input className="border p-3 rounded-lg w-full" placeholder="Ej: Av. Providencia 1234" value={patientData.address} onChange={e=>setPatientData({...patientData,address:e.target.value})}/>
+                </div>
+
+                {/* 8. Comuna */}
+                <div className="md:col-span-1">
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Comuna</label>
+                  <input className="border p-3 rounded-lg w-full" placeholder="Ej: Providencia" value={patientData.commune} onChange={e=>setPatientData({...patientData,commune:e.target.value})}/>
+                </div>
+
               </div>
-              <button onClick={()=>setStep(3)} className="bg-teal-600 text-white w-full py-4 rounded-xl hover:bg-teal-700 font-bold mt-6">GUARDAR DATOS</button>
+
+              <button 
+                onClick={()=>setStep(3)} 
+                className="bg-teal-600 text-white w-full py-4 rounded-xl hover:bg-teal-700 font-bold mt-8 shadow-lg transition transform hover:scale-[1.01]"
+              >
+                GUARDAR Y CONTINUAR
+              </button>
             </div>
           )}
 
-          {/* PASO 3: SELECCIONAR CATEGORÍA (Nivel 1) */}
+          {/* PASO 3: SELECCIONAR CATEGORÍA */}
           {step === 3 && (
             <div>
               <h2 className="text-xl font-bold mb-6 text-center">¿Qué tipo de atención necesita?</h2>
@@ -208,7 +279,7 @@ export default function BookingWizard() {
             </div>
           )}
 
-          {/* PASO 4: SELECCIONAR ESPECIALIDAD (Nivel 2) */}
+          {/* PASO 4: SELECCIONAR ESPECIALIDAD */}
           {step === 4 && (
             <div>
               <h2 className="text-xl font-bold mb-2 text-center text-teal-800">{selectedCategory}</h2>
@@ -229,7 +300,7 @@ export default function BookingWizard() {
             </div>
           )}
 
-          {/* PASO 5: SELECCIONAR SERVICIO (Nivel 3) */}
+          {/* PASO 5: SELECCIONAR SERVICIO */}
           {step === 5 && (
             <div>
               <h2 className="text-xl font-bold mb-2 text-center text-teal-800">{selectedSpecialty}</h2>
@@ -256,7 +327,7 @@ export default function BookingWizard() {
             </div>
           )}
 
-          {/* PASO 6: CALENDARIO (Horarios) */}
+          {/* PASO 6: CALENDARIO */}
           {step === 6 && (
             <div>
               <h2 className="text-xl font-bold mb-4">Seleccione Horario</h2>
